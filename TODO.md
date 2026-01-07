@@ -1,0 +1,1 @@
+- automatically download and use ffmpeg executable from official website if not found locally
