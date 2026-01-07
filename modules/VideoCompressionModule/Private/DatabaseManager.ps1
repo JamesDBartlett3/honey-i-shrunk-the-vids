@@ -355,15 +355,19 @@ function Get-DatabaseStatistics {
         $sizeResult = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $sizeQuery
         $stats['TotalOriginalSize'] = [long]$sizeResult.total_size
 
-        # Total compressed size
+        # Total compressed size (completed videos only)
         $compressedQuery = "SELECT SUM(compressed_size) as total_compressed FROM videos WHERE status = 'Completed';"
         $compressedResult = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $compressedQuery
         $stats['TotalCompressedSize'] = [long]$compressedResult.total_compressed
 
-        # Space saved
-        if ($stats['TotalCompressedSize'] -gt 0) {
-            $stats['SpaceSaved'] = $stats['TotalOriginalSize'] - $stats['TotalCompressedSize']
-            $stats['AverageCompressionRatio'] = [math]::Round(($stats['TotalCompressedSize'] / $stats['TotalOriginalSize']), 2)
+        # Space saved (only for completed videos - original vs compressed)
+        $completedOriginalQuery = "SELECT SUM(original_size) as completed_original FROM videos WHERE status = 'Completed';"
+        $completedOriginalResult = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $completedOriginalQuery
+        $completedOriginalSize = [long]$completedOriginalResult.completed_original
+
+        if ($stats['TotalCompressedSize'] -gt 0 -and $completedOriginalSize -gt 0) {
+            $stats['SpaceSaved'] = $completedOriginalSize - $stats['TotalCompressedSize']
+            $stats['AverageCompressionRatio'] = [math]::Round(($stats['TotalCompressedSize'] / $completedOriginalSize), 2)
         }
 
         return $stats

@@ -900,13 +900,22 @@ function Test-SPVidComp-FilenameCharacters {
     try {
         $illegalChars = Get-SPVidComp-IllegalCharacters
 
+        # Use character-by-character comparison for reliable detection
+        # (String.Contains may not reliably detect all special characters like null)
+        $filenameChars = $Filename.ToCharArray()
+        $foundIllegal = @()
+
         foreach ($char in $illegalChars) {
-            if ($Filename.Contains($char)) {
-                return @{
-                    IsValid = $false
-                    IllegalCharacters = $illegalChars | Where-Object { $Filename.Contains($_) }
-                    OriginalFilename = $Filename
-                }
+            if ($filenameChars -contains $char) {
+                $foundIllegal += $char
+            }
+        }
+
+        if ($foundIllegal.Count -gt 0) {
+            return @{
+                IsValid = $false
+                IllegalCharacters = $foundIllegal
+                OriginalFilename = $Filename
             }
         }
 
@@ -969,10 +978,15 @@ function Repair-SPVidComp-Filename {
                 }
             }
             'Omit' {
-                $sanitized = $Filename
-                foreach ($char in $test.IllegalCharacters) {
-                    $sanitized = $sanitized.Replace($char, '')
+                # Use character-by-character rebuild for reliable removal
+                $chars = $Filename.ToCharArray()
+                $illegalList = @($test.IllegalCharacters)
+                $sanitizedChars = foreach ($c in $chars) {
+                    if ($illegalList -notcontains $c) {
+                        $c
+                    }
                 }
+                $sanitized = -join $sanitizedChars
 
                 Write-SPVidComp-Log -Message "Filename sanitized (omit): '$Filename' -> '$sanitized'" -Level 'Info'
 
@@ -985,10 +999,17 @@ function Repair-SPVidComp-Filename {
                 }
             }
             'Replace' {
-                $sanitized = $Filename
-                foreach ($char in $test.IllegalCharacters) {
-                    $sanitized = $sanitized.Replace($char, $ReplacementChar)
+                # Use character-by-character rebuild for reliable replacement
+                $chars = $Filename.ToCharArray()
+                $illegalList = @($test.IllegalCharacters)
+                $sanitizedChars = foreach ($c in $chars) {
+                    if ($illegalList -contains $c) {
+                        $ReplacementChar
+                    } else {
+                        $c
+                    }
                 }
+                $sanitized = -join $sanitizedChars
 
                 Write-SPVidComp-Log -Message "Filename sanitized (replace): '$Filename' -> '$sanitized'" -Level 'Info'
 

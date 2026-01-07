@@ -487,8 +487,76 @@ honey-i-shrunk-the-vids/
 │                                   #   - Video catalog
 │                                   #   - Configuration storage
 │                                   #   - Processing state
+├── tests/                          # Pester test suite
+│   ├── TestHelper.ps1              # Common test utilities
+│   ├── Run-Tests.ps1               # Test runner script
+│   ├── VideoCompressionModule.Tests.ps1
+│   ├── Private/
+│   │   ├── DatabaseManager.Tests.ps1
+│   │   ├── Logger.Tests.ps1
+│   │   └── EmailHelper.Tests.ps1
+│   └── Integration/
+│       └── Workflow.Tests.ps1      # Integration tests
 └── temp/                           # Temporary storage (auto-cleaned)
 ```
+
+## Testing
+
+The project includes a comprehensive Pester test suite covering unit tests and integration tests.
+
+### Prerequisites
+
+- **Pester 5.0+** - Will be automatically installed if missing
+- **PSSQLite** - Required for database tests (auto-installed)
+
+### Running Tests
+
+```powershell
+# Run all tests
+.\tests\Run-Tests.ps1
+
+# Run only unit tests
+.\tests\Run-Tests.ps1 -TestType Unit
+
+# Run only integration tests
+.\tests\Run-Tests.ps1 -TestType Integration
+
+# Run specific test by name
+.\tests\Run-Tests.ps1 -TestName 'Initialize-Database'
+
+# Run with detailed output
+.\tests\Run-Tests.ps1 -Output Detailed
+
+# Run with code coverage
+.\tests\Run-Tests.ps1 -CodeCoverage
+
+# Export test results (NUnit XML format)
+.\tests\Run-Tests.ps1 -OutputPath .\test-results.xml
+```
+
+### Test Categories
+
+| Category | Description | Location |
+|----------|-------------|----------|
+| **DatabaseManager** | SQLite operations, schema creation, CRUD | `tests/Private/DatabaseManager.Tests.ps1` |
+| **Logger** | Logging infrastructure, rotation, levels | `tests/Private/Logger.Tests.ps1` |
+| **EmailHelper** | Email notifications, report generation | `tests/Private/EmailHelper.Tests.ps1` |
+| **Module Functions** | Public module functions, utilities | `tests/VideoCompressionModule.Tests.ps1` |
+| **Integration** | End-to-end workflow, status progression | `tests/Integration/Workflow.Tests.ps1` |
+
+### Test Coverage
+
+The test suite covers:
+- Database initialization and schema creation
+- Video catalog CRUD operations
+- Status progression workflow
+- Configuration persistence
+- Filename sanitization and illegal character handling
+- Archive copy with hash verification
+- Disk space validation
+- Error handling and retry logic
+- Resume capability after interruption
+- Statistics calculation
 
 ## License
 
