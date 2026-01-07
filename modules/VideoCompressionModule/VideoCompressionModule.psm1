@@ -86,6 +86,10 @@ function Initialize-SPVidComp-Config {
                 VerifyChecksums = [bool]::Parse($configHash['advanced_verify_checksums'])
                 DryRun = [bool]::Parse($configHash['advanced_dry_run'])
             }
+            IllegalCharacterHandling = [PSCustomObject]@{
+                Strategy = $configHash['illegal_char_strategy']
+                ReplacementChar = $configHash['illegal_char_replacement']
+            }
         }
 
         # Initialize logger
@@ -357,7 +361,7 @@ function Download-SPVidComp-Video {
 
         # Ensure destination directory exists
         $destDir = Split-Path -Path $DestinationPath -Parent
-        if (-not (Test-Path -Path $destDir)) {
+        if (-not (Test-Path -LiteralPath $destDir)) {
             New-Item -ItemType Directory -Path $destDir -Force | Out-Null
         }
 
@@ -365,7 +369,7 @@ function Download-SPVidComp-Video {
         Get-PnPFile -Url $serverRelativeUrl -Path $destDir -FileName (Split-Path -Path $DestinationPath -Leaf) `
             -AsFile -Force -Connection $Script:SharePointConnection -ErrorAction Stop
 
-        if (Test-Path -Path $DestinationPath) {
+        if (Test-Path -LiteralPath $DestinationPath) {
             Write-SPVidComp-Log -Message "Video downloaded successfully: $DestinationPath" -Level 'Info'
             return $true
         }
@@ -399,12 +403,12 @@ function Copy-SPVidComp-Archive {
 
         # Ensure archive directory exists
         $archiveDir = Split-Path -Path $ArchivePath -Parent
-        if (-not (Test-Path -Path $archiveDir)) {
+        if (-not (Test-Path -LiteralPath $archiveDir)) {
             New-Item -ItemType Directory -Path $archiveDir -Force | Out-Null
         }
 
         # Copy file
-        Copy-Item -Path $SourcePath -Destination $ArchivePath -Force -ErrorAction Stop
+        Copy-Item -LiteralPath $SourcePath -Destination $ArchivePath -Force -ErrorAction Stop
 
         # Verify copy with hash
         $verified = Test-SPVidComp-ArchiveIntegrity -SourcePath $SourcePath -DestinationPath $ArchivePath
@@ -421,8 +425,8 @@ function Copy-SPVidComp-Archive {
         else {
             Write-SPVidComp-Log -Message "Archive verification failed: Hash mismatch" -Level 'Error'
             # Delete corrupted archive
-            if (Test-Path -Path $ArchivePath) {
-                Remove-Item -Path $ArchivePath -Force
+            if (Test-Path -LiteralPath $ArchivePath) {
+                Remove-Item -LiteralPath $ArchivePath -Force
             }
             return @{
                 Success = $false
@@ -529,9 +533,9 @@ function Invoke-SPVidComp-Compression {
         $process = Start-Process -FilePath 'ffmpeg' -ArgumentList $ffmpegArgs -NoNewWindow -Wait -PassThru -RedirectStandardError "$env:TEMP\ffmpeg-error.log"
 
         # Check result
-        if ($process.ExitCode -eq 0 -and (Test-Path -Path $OutputPath)) {
-            $inputSize = (Get-Item -Path $InputPath).Length
-            $outputSize = (Get-Item -Path $OutputPath).Length
+        if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath $OutputPath)) {
+            $inputSize = (Get-Item -LiteralPath $InputPath).Length
+            $outputSize = (Get-Item -LiteralPath $OutputPath).Length
             $ratio = [math]::Round(($outputSize / $inputSize), 2)
 
             Write-SPVidComp-Log -Message "Compression completed successfully. Ratio: $ratio" -Level 'Info'
@@ -544,7 +548,7 @@ function Invoke-SPVidComp-Compression {
             }
         }
         else {
-            $errorLog = Get-Content -Path "$env:TEMP\ffmpeg-error.log" -Raw -ErrorAction SilentlyContinue
+            $errorLog = Get-Content -LiteralPath "$env:TEMP\ffmpeg-error.log" -Raw -ErrorAction SilentlyContinue
             Write-SPVidComp-Log -Message "Compression failed. Exit code: $($process.ExitCode). Error: $errorLog" -Level 'Error'
 
             return @{
@@ -589,7 +593,7 @@ function Test-SPVidComp-VideoIntegrity {
             }
         }
         else {
-            $errorLog = Get-Content -Path "$env:TEMP\ffprobe-error.log" -Raw -ErrorAction SilentlyContinue
+            $errorLog = Get-Content -LiteralPath "$env:TEMP\ffprobe-error.log" -Raw -ErrorAction SilentlyContinue
             Write-SPVidComp-Log -Message "Video integrity check failed: $errorLog" -Level 'Error'
 
             return @{
@@ -792,7 +796,7 @@ function Test-SPVidComp-DiskSpace {
     )
 
     try {
-        $drive = (Get-Item -Path $Path).PSDrive
+        $drive = (Get-Item -LiteralPath $Path).PSDrive
         $freeSpace = $drive.Free
 
         $hasSpace = ($freeSpace -ge $RequiredBytes)
@@ -832,6 +836,182 @@ function Get-SPVidComp-Statistics {
     catch {
         Write-SPVidComp-Log -Message "Failed to retrieve statistics: $_" -Level 'Error'
         return $null
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Get-SPVidComp-PlatformDefaults
+# Purpose: Get platform-specific default paths
+#------------------------------------------------------------------------------------------------------------------
+function Get-SPVidComp-PlatformDefaults {
+    [CmdletBinding()]
+    param()
+
+    $defaults = @{}
+
+    if ($IsWindows) {
+        $defaults['TempPath'] = 'C:\Temp\VideoCompression'
+        $defaults['ArchivePath'] = '\\NAS\Archive\Videos'
+        $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '..\..\logs'
+    }
+    elseif ($IsMacOS) {
+        $defaults['TempPath'] = '/tmp/VideoCompression'
+        $defaults['ArchivePath'] = '/Volumes/NAS/Archive/Videos'
+        $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '../../logs'
+    }
+    elseif ($IsLinux) {
+        $defaults['TempPath'] = '/tmp/VideoCompression'
+        $defaults['ArchivePath'] = '/mnt/nas/Archive/Videos'
+        $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '../../logs'
+    }
+    else {
+        # Fallback for unknown platforms
+        $defaults['TempPath'] = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'VideoCompression'
+        $defaults['ArchivePath'] = '/mnt/archive/Videos'
+        $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '../../logs'
+    }
+
+    return $defaults
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Get-SPVidComp-IllegalCharacters
+# Purpose: Get platform-specific illegal filename characters
+#------------------------------------------------------------------------------------------------------------------
+function Get-SPVidComp-IllegalCharacters {
+    [CmdletBinding()]
+    param()
+
+    # Use native .NET method to get platform-specific invalid filename characters
+    return [System.IO.Path]::GetInvalidFileNameChars()
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Test-SPVidComp-FilenameCharacters
+# Purpose: Check if filename contains illegal characters
+#------------------------------------------------------------------------------------------------------------------
+function Test-SPVidComp-FilenameCharacters {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Filename
+    )
+
+    try {
+        $illegalChars = Get-SPVidComp-IllegalCharacters
+
+        foreach ($char in $illegalChars) {
+            if ($Filename.Contains($char)) {
+                return @{
+                    IsValid = $false
+                    IllegalCharacters = $illegalChars | Where-Object { $Filename.Contains($_) }
+                    OriginalFilename = $Filename
+                }
+            }
+        }
+
+        return @{
+            IsValid = $true
+            IllegalCharacters = @()
+            OriginalFilename = $Filename
+        }
+    }
+    catch {
+        Write-SPVidComp-Log -Message "Failed to test filename characters: $_" -Level 'Error'
+        return @{
+            IsValid = $false
+            IllegalCharacters = @()
+            OriginalFilename = $Filename
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Repair-SPVidComp-Filename
+# Purpose: Sanitize filename based on configured strategy
+#------------------------------------------------------------------------------------------------------------------
+function Repair-SPVidComp-Filename {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Filename,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateSet('Omit', 'Replace', 'Error')]
+        [string]$Strategy = 'Replace',
+
+        [Parameter(Mandatory = $false)]
+        [string]$ReplacementChar = '_'
+    )
+
+    try {
+        $test = Test-SPVidComp-FilenameCharacters -Filename $Filename
+
+        if ($test.IsValid) {
+            return @{
+                Success = $true
+                OriginalFilename = $Filename
+                SanitizedFilename = $Filename
+                Changed = $false
+            }
+        }
+
+        # Handle based on strategy
+        switch ($Strategy) {
+            'Error' {
+                return @{
+                    Success = $false
+                    OriginalFilename = $Filename
+                    SanitizedFilename = $null
+                    Changed = $false
+                    Error = "Filename contains illegal characters: $($test.IllegalCharacters -join ', ')"
+                }
+            }
+            'Omit' {
+                $sanitized = $Filename
+                foreach ($char in $test.IllegalCharacters) {
+                    $sanitized = $sanitized.Replace($char, '')
+                }
+
+                Write-SPVidComp-Log -Message "Filename sanitized (omit): '$Filename' -> '$sanitized'" -Level 'Info'
+
+                return @{
+                    Success = $true
+                    OriginalFilename = $Filename
+                    SanitizedFilename = $sanitized
+                    Changed = $true
+                    RemovedCharacters = $test.IllegalCharacters
+                }
+            }
+            'Replace' {
+                $sanitized = $Filename
+                foreach ($char in $test.IllegalCharacters) {
+                    $sanitized = $sanitized.Replace($char, $ReplacementChar)
+                }
+
+                Write-SPVidComp-Log -Message "Filename sanitized (replace): '$Filename' -> '$sanitized'" -Level 'Info'
+
+                return @{
+                    Success = $true
+                    OriginalFilename = $Filename
+                    SanitizedFilename = $sanitized
+                    Changed = $true
+                    ReplacedCharacters = $test.IllegalCharacters
+                    ReplacementChar = $ReplacementChar
+                }
+            }
+        }
+    }
+    catch {
+        Write-SPVidComp-Log -Message "Failed to repair filename: $_" -Level 'Error'
+        return @{
+            Success = $false
+            OriginalFilename = $Filename
+            SanitizedFilename = $null
+            Changed = $false
+            Error = $_.Exception.Message
+        }
     }
 }
 
@@ -898,4 +1078,6 @@ Export-ModuleMember -Function Initialize-SPVidComp-Config, Connect-SPVidComp-Sha
     Get-SPVidComp-Files, Download-SPVidComp-Video, Copy-SPVidComp-Archive, Test-SPVidComp-ArchiveIntegrity, `
     Invoke-SPVidComp-Compression, Test-SPVidComp-VideoIntegrity, Test-SPVidComp-VideoLength, `
     Upload-SPVidComp-Video, Write-SPVidComp-Log, Send-SPVidComp-Notification, Test-SPVidComp-DiskSpace, `
-    Get-SPVidComp-Statistics, Test-SPVidComp-ConfigExists, Get-SPVidComp-Config, Set-SPVidComp-Config
+    Get-SPVidComp-Statistics, Test-SPVidComp-ConfigExists, Get-SPVidComp-Config, Set-SPVidComp-Config, `
+    Get-SPVidComp-PlatformDefaults, Get-SPVidComp-IllegalCharacters, Test-SPVidComp-FilenameCharacters, `
+    Repair-SPVidComp-Filename

@@ -6,10 +6,10 @@
     Author = 'SharePoint Video Compression Team'
     CompanyName = ''
     Copyright = '(c) 2026. All rights reserved.'
-    Description = 'PowerShell module for automating SharePoint video compression and archival with SQLite catalog tracking, hash verification, and integrity checks.'
+    Description = 'Cross-platform PowerShell module for automating SharePoint video compression and archival with SQLite catalog tracking, hash verification, integrity checks, and illegal character handling.'
 
-    # Minimum PowerShell version
-    PowerShellVersion = '5.1'
+    # Minimum PowerShell version (7.0+ for cross-platform compatibility)
+    PowerShellVersion = '7.0'
 
     # Required modules
     RequiredModules = @(

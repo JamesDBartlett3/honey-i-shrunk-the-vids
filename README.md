@@ -4,12 +4,14 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 
 ## Features
 
+- **Cross-Platform Compatible**: Runs on Windows, macOS, and Linux (PowerShell 7.0+)
 - **Two-Phase Approach**: Catalog all videos first, then process them systematically
 - **SQLite Catalog**: Persistent database tracking with resume capability
 - **Safety-First Design**: Archive and verify BEFORE compression
 - **Hash Verification**: SHA256 verification of archived copies
 - **Integrity Checking**: ffprobe verification to detect corruption
 - **Duration Validation**: Ensure compressed videos match original length
+- **Illegal Character Handling**: Automatic filename sanitization with configurable strategies
 - **Email Notifications**: Automated reports on completion and errors
 - **Progress Tracking**: Resume from any interruption
 - **Comprehensive Logging**: Detailed logs with rotation
@@ -17,9 +19,9 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 ## Prerequisites
 
 ### Required Software
-- **PowerShell 5.1 or higher**
-- **ffmpeg** - For video compression
-- **ffprobe** - For video verification (comes with ffmpeg)
+- **PowerShell 7.0 or higher** - For cross-platform compatibility ([Download here](https://github.com/PowerShell/PowerShell/releases))
+- **ffmpeg** - For video compression ([Download here](https://ffmpeg.org/download.html))
+- **ffprobe** - For video verification (included with ffmpeg)
 
 ### Required PowerShell Modules
 The following modules will be automatically installed if missing:
@@ -30,6 +32,36 @@ The following modules will be automatically installed if missing:
 - Network access to SharePoint Online tenant
 - Write access to external archive storage path
 - Sufficient disk space for temporary files (3x largest video recommended)
+
+## Cross-Platform Compatibility
+
+This solution is built on PowerShell 7.0+ and runs on **Windows**, **macOS**, and **Linux**.
+
+### Installing PowerShell 7+
+
+If you don't have PowerShell 7.0 or higher installed:
+
+**Windows:**
+```powershell
+winget install --id Microsoft.Powershell --source winget
+```
+
+**macOS:**
+```bash
+brew install --cask powershell
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get update
+sudo apt-get install -y powershell
+```
+
+For other platforms, see the [official installation guide](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell).
+
+### Platform Detection
+
+The setup wizard automatically detects your platform and provides appropriate default paths for temporary files, archive storage, and logs.
 
 ## Installation
 
@@ -67,9 +99,10 @@ Or explicitly run setup:
 
 The setup wizard will prompt you for all necessary configuration:
 - **SharePoint Settings**: Site URL, library name, folder path
-- **File Paths**: Temp download, external archive, logs
+- **File Paths**: Temp download, external archive, logs (with platform-aware defaults)
 - **Compression Settings**: Frame rate, codec, timeout
 - **Processing Settings**: Retry attempts, disk space requirements
+- **Illegal Character Handling**: Strategy for filenames with illegal characters
 - **Email Notifications**: SMTP settings (optional)
 - **Logging Settings**: Log level, output options
 
@@ -223,6 +256,20 @@ The interactive setup wizard collects configuration in these categories:
 - **External Archive Path**: Network/external storage for originals
 - **Log Path**: Directory for log files
 
+**Platform-Specific Defaults:**
+- **Windows**:
+  - Temp: `C:\Temp\VideoCompression`
+  - Archive: `\\NAS\Archive\Videos`
+  - Logs: `.\logs`
+- **macOS**:
+  - Temp: `/tmp/VideoCompression`
+  - Archive: `/Volumes/NAS/Archive/Videos`
+  - Logs: `./logs`
+- **Linux**:
+  - Temp: `/tmp/VideoCompression`
+  - Archive: `/mnt/nas/Archive/Videos`
+  - Logs: `./logs`
+
 #### Compression Settings
 - **Frame Rate**: Target frame rate (default: 10)
 - **Video Codec**: Compression codec (default: libx265)
@@ -242,6 +289,15 @@ The interactive setup wizard collects configuration in these categories:
 - **Retry Attempts**: Times to retry failed videos (default: 3)
 - **Required Disk Space**: Minimum free space in GB (default: 50)
 - **Duration Tolerance**: Acceptable duration difference in seconds (default: 1)
+
+#### Illegal Character Handling
+- **Strategy**: How to handle filenames with illegal characters
+  - **Replace** (default): Replace illegal characters with a substitute character
+  - **Omit**: Remove illegal characters entirely
+  - **Error**: Stop processing the file, log error, and continue with next file
+- **Replacement Character**: Character to use when strategy is "Replace" (default: `_`)
+
+The solution automatically detects platform-specific illegal filename characters using the native .NET method `[System.IO.Path]::GetInvalidFileNameChars()`, ensuring compatibility across Windows, macOS, and Linux.
 
 #### Email Notifications (Optional)
 - **Enabled**: Enable/disable email notifications

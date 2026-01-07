@@ -114,6 +114,12 @@ function Show-CurrentConfig {
     Write-Host "`nLogging:" -ForegroundColor Yellow
     Write-Host "  Log Level          : $($Config['logging_log_level'])" -ForegroundColor White
     Write-Host "  Console Output     : $($Config['logging_console_output'])" -ForegroundColor White
+
+    Write-Host "`nIllegal Character Handling:" -ForegroundColor Yellow
+    Write-Host "  Strategy           : $($Config['illegal_char_strategy'])" -ForegroundColor White
+    if ($Config['illegal_char_strategy'] -eq 'Replace') {
+        Write-Host "  Replacement Char   : '$($Config['illegal_char_replacement'])'" -ForegroundColor White
+    }
     Write-Host ""
 }
 
@@ -122,6 +128,19 @@ function Initialize-Configuration {
 
     Write-Host "Welcome to the SharePoint Video Compression setup wizard." -ForegroundColor Green
     Write-Host "Please provide the following configuration details.`n" -ForegroundColor Green
+
+    # Detect platform and get defaults
+    $platformDefaults = Get-SPVidComp-PlatformDefaults
+
+    if ($IsWindows) {
+        Write-Host "Detected Platform: Windows" -ForegroundColor Green
+    }
+    elseif ($IsMacOS) {
+        Write-Host "Detected Platform: macOS" -ForegroundColor Green
+    }
+    elseif ($IsLinux) {
+        Write-Host "Detected Platform: Linux" -ForegroundColor Green
+    }
 
     $config = @{}
 
@@ -132,11 +151,11 @@ function Initialize-Configuration {
     $config['sharepoint_folder_path'] = Read-UserInput -Prompt "Folder Path (optional, e.g., /Videos)" -DefaultValue ""
     $config['sharepoint_recursive'] = (Read-YesNo -Prompt "Scan subfolders recursively?" -DefaultValue $true).ToString()
 
-    # Paths
+    # Paths - Platform-aware defaults
     Write-Host "`n--- File Paths ---" -ForegroundColor Cyan
-    $config['paths_temp_download'] = Read-UserInput -Prompt "Temp Download Path" -DefaultValue "C:\Temp\VideoCompression" -Required
-    $config['paths_external_archive'] = Read-UserInput -Prompt "External Archive Path" -DefaultValue "\\NAS\Archive\Videos" -Required
-    $config['paths_log'] = Read-UserInput -Prompt "Log Path" -DefaultValue "$PSScriptRoot\logs" -Required
+    $config['paths_temp_download'] = Read-UserInput -Prompt "Temp Download Path" -DefaultValue $platformDefaults['TempPath'] -Required
+    $config['paths_external_archive'] = Read-UserInput -Prompt "External Archive Path" -DefaultValue $platformDefaults['ArchivePath'] -Required
+    $config['paths_log'] = Read-UserInput -Prompt "Log Path" -DefaultValue $platformDefaults['LogPath'] -Required
 
     # Compression Settings
     Write-Host "`n--- Compression Settings ---" -ForegroundColor Cyan
@@ -193,6 +212,33 @@ function Initialize-Configuration {
     $config['advanced_cleanup_temp_files'] = (Read-YesNo -Prompt "Cleanup temp files after processing?" -DefaultValue $true).ToString()
     $config['advanced_verify_checksums'] = (Read-YesNo -Prompt "Verify checksums?" -DefaultValue $true).ToString()
     $config['advanced_dry_run'] = 'False'
+
+    # Illegal Character Handling
+    Write-Host "`n--- Illegal Character Handling ---" -ForegroundColor Cyan
+    Write-Host "How should illegal filename characters be handled?" -ForegroundColor Yellow
+    Write-Host "  [R] Replace - Replace illegal characters with a substitute (default)" -ForegroundColor White
+    Write-Host "  [O] Omit - Remove illegal characters entirely" -ForegroundColor White
+    Write-Host "  [E] Error - Stop processing and log error" -ForegroundColor White
+
+    $strategyChoice = Read-Host -Prompt "`nYour choice [R/O/E]"
+
+    switch ($strategyChoice.ToUpper()) {
+        'O' { $config['illegal_char_strategy'] = 'Omit' }
+        'E' { $config['illegal_char_strategy'] = 'Error' }
+        default { $config['illegal_char_strategy'] = 'Replace' }
+    }
+
+    if ($config['illegal_char_strategy'] -eq 'Replace') {
+        $config['illegal_char_replacement'] = Read-UserInput -Prompt "Replacement character" -DefaultValue "_"
+    }
+    else {
+        $config['illegal_char_replacement'] = '_'
+    }
+
+    Write-Host "`nSelected strategy: $($config['illegal_char_strategy'])" -ForegroundColor Green
+    if ($config['illegal_char_strategy'] -eq 'Replace') {
+        Write-Host "Replacement character: '$($config['illegal_char_replacement'])'" -ForegroundColor Green
+    }
 
     # Save configuration to database
     Write-Host "`n`nSaving configuration to database..." -ForegroundColor Yellow
@@ -385,6 +431,8 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
         $videoCodec = Get-ConfigValue -Key 'compression_video_codec'
         $timeoutMinutes = [int](Get-ConfigValue -Key 'compression_timeout_minutes')
         $durationTolerance = [int](Get-ConfigValue -Key 'processing_duration_tolerance_seconds')
+        $illegalCharStrategy = Get-ConfigValue -Key 'illegal_char_strategy' -DefaultValue 'Replace'
+        $illegalCharReplacement = Get-ConfigValue -Key 'illegal_char_replacement' -DefaultValue '_'
 
         # Process each video
         $processedCount = 0
@@ -422,7 +470,53 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 Write-Host "[2/6] Archiving to external storage..." -ForegroundColor Yellow
                 Update-SPVidComp-Status -VideoId $video.id -Status 'Archiving'
 
-                $videoArchivePath = Join-Path -Path $archivePath -ChildPath $video.filename
+                # Sanitize filename for filesystem compatibility
+                $sanitizeResult = Repair-SPVidComp-Filename -Filename $video.filename `
+                    -Strategy $illegalCharStrategy -ReplacementChar $illegalCharReplacement
+
+                if (-not $sanitizeResult.Success) {
+                    throw "Filename sanitization failed: $($sanitizeResult.Error)"
+                }
+
+                if ($sanitizeResult.Changed) {
+                    Write-Host "  Filename sanitized: '$($video.filename)' -> '$($sanitizeResult.SanitizedFilename)'" -ForegroundColor Yellow
+                }
+
+                # Build mirrored folder structure: <archive>/<site>/<library>/<folder_path>/<filename>
+                # Extract site path from URL (e.g., "https://contoso.sharepoint.com/sites/MySite")
+                $siteUri = [System.Uri]$video.site_url
+                $sitePath = $siteUri.AbsolutePath.TrimStart('/')
+
+                if ([string]::IsNullOrEmpty($sitePath)) {
+                    $sitePath = $siteUri.Host.Split('.')[0]  # Use hostname if path is empty
+                }
+
+                # Split site path components and join using platform-appropriate separator
+                $sitePathComponents = $sitePath.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+
+                # Start with archive root
+                $videoArchivePath = $archivePath
+
+                # Add site path components (e.g., "sites", "MySite")
+                foreach ($component in $sitePathComponents) {
+                    $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $component
+                }
+
+                # Add library name
+                $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $video.library_name
+
+                # Add folder path components if present
+                if (-not [string]::IsNullOrEmpty($video.folder_path)) {
+                    $folderPathComponents = $video.folder_path.TrimStart('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+                    foreach ($component in $folderPathComponents) {
+                        $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $component
+                    }
+                }
+
+                # Add sanitized filename
+                $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $sanitizeResult.SanitizedFilename
+
+                Write-Host "  Archive path: $videoArchivePath" -ForegroundColor Gray
                 $archiveResult = Copy-SPVidComp-Archive -SourcePath $tempOriginal -ArchivePath $videoArchivePath
 
                 if (-not $archiveResult.Success) {
@@ -488,11 +582,11 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 # Step 6: Cleanup
                 Write-Host "[6/6] Cleaning up temp files..." -ForegroundColor Yellow
 
-                if (Test-Path -Path $tempOriginal) {
-                    Remove-Item -Path $tempOriginal -Force
+                if (Test-Path -LiteralPath $tempOriginal) {
+                    Remove-Item -LiteralPath $tempOriginal -Force
                 }
-                if (Test-Path -Path $tempCompressed) {
-                    Remove-Item -Path $tempCompressed -Force
+                if (Test-Path -LiteralPath $tempCompressed) {
+                    Remove-Item -LiteralPath $tempCompressed -Force
                 }
 
                 # Mark as completed
@@ -516,11 +610,11 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 }
 
                 # Clean up temp files
-                if (Test-Path -Path $tempOriginal) {
-                    Remove-Item -Path $tempOriginal -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $tempOriginal) {
+                    Remove-Item -LiteralPath $tempOriginal -Force -ErrorAction SilentlyContinue
                 }
-                if (Test-Path -Path $tempCompressed) {
-                    Remove-Item -Path $tempCompressed -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $tempCompressed) {
+                    Remove-Item -LiteralPath $tempCompressed -Force -ErrorAction SilentlyContinue
                 }
 
                 $failedCount++

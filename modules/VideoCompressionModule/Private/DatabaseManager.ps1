@@ -21,7 +21,7 @@ function Initialize-Database {
 
         # Ensure directory exists
         $dbDir = Split-Path -Path $DatabasePath -Parent
-        if (-not (Test-Path -Path $dbDir)) {
+        if (-not (Test-Path -LiteralPath $dbDir)) {
             New-Item -ItemType Directory -Path $dbDir -Force | Out-Null
         }
 

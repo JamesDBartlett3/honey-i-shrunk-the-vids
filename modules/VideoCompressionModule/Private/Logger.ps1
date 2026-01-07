@@ -48,7 +48,7 @@ function Initialize-Logger {
 
     try {
         # Ensure log directory exists
-        if (-not (Test-Path -Path $LogPath)) {
+        if (-not (Test-Path -LiteralPath $LogPath)) {
             New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
         }
 
@@ -114,8 +114,8 @@ function Write-LogEntry {
             $logFile = Join-Path -Path $Script:LogConfig.LogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
 
             # Check log file size and rotate if needed
-            if (Test-Path -Path $logFile) {
-                $fileInfo = Get-Item -Path $logFile
+            if (Test-Path -LiteralPath $logFile) {
+                $fileInfo = Get-Item -LiteralPath $logFile
                 $fileSizeMB = $fileInfo.Length / 1MB
 
                 if ($fileSizeMB -ge $Script:LogConfig.MaxLogSizeMB) {
@@ -124,7 +124,7 @@ function Write-LogEntry {
             }
 
             # Write log entry
-            Add-Content -Path $logFile -Value $logEntry -ErrorAction Stop
+            Add-Content -LiteralPath $logFile -Value $logEntry -ErrorAction Stop
         }
         catch {
             Write-Warning "Failed to write to log file: $_"
@@ -172,7 +172,7 @@ function Clean-OldLogs {
 
         foreach ($file in $logFiles) {
             if ($file.LastWriteTime -lt $cutoffDate) {
-                Remove-Item -Path $file.FullName -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
                 Write-LogEntry -Message "Removed old log file: $($file.Name)" -Level 'Debug'
             }
         }
@@ -205,12 +205,12 @@ function Get-LogHistory {
 
         $logFile = Join-Path -Path $Script:LogConfig.LogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
 
-        if (-not (Test-Path -Path $logFile)) {
+        if (-not (Test-Path -LiteralPath $logFile)) {
             Write-Warning "Log file not found: $logFile"
             return
         }
 
-        $entries = Get-Content -Path $logFile -Tail $Last
+        $entries = Get-Content -LiteralPath $logFile -Tail $Last
 
         if ($Level) {
             $entries = $entries | Where-Object { $_ -match "\[$Level\]" }
