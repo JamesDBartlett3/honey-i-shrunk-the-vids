@@ -49,16 +49,16 @@ function Read-UserInput {
     $promptText += ": "
 
     do {
-        $input = Read-Host -Prompt $promptText
-        if ([string]::IsNullOrWhiteSpace($input) -and $DefaultValue) {
+        $userInput = Read-Host -Prompt $promptText
+        if ([string]::IsNullOrWhiteSpace($userInput) -and $DefaultValue) {
             return $DefaultValue
         }
-        if ($Required -and [string]::IsNullOrWhiteSpace($input)) {
+        if ($Required -and [string]::IsNullOrWhiteSpace($userInput)) {
             Write-Host "This field is required. Please enter a value." -ForegroundColor Red
         }
-    } while ($Required -and [string]::IsNullOrWhiteSpace($input))
+    } while ($Required -and [string]::IsNullOrWhiteSpace($userInput))
 
-    return $input
+    return $userInput
 }
 
 function Read-YesNo {

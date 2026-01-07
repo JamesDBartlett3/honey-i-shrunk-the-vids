@@ -7,11 +7,14 @@ $Script:ProjectRoot = Split-Path -Path $PSScriptRoot -Parent
 $Script:ModulePath = Join-Path -Path $ProjectRoot -ChildPath 'modules\VideoCompressionModule'
 $Script:PrivatePath = Join-Path -Path $ModulePath -ChildPath 'Private'
 
+# Get cross-platform temp directory
+$Script:TempPath = [System.IO.Path]::GetTempPath()
+
 # Test database path (in-memory or temp file)
-$Script:TestDatabasePath = Join-Path -Path $env:TEMP -ChildPath "test-video-catalog-$(Get-Random).db"
+$Script:TestDatabasePath = Join-Path -Path $Script:TempPath -ChildPath "test-video-catalog-$(Get-Random).db"
 
 # Test log path
-$Script:TestLogPath = Join-Path -Path $env:TEMP -ChildPath "test-logs-$(Get-Random)"
+$Script:TestLogPath = Join-Path -Path $Script:TempPath -ChildPath "test-logs-$(Get-Random)"
 
 #------------------------------------------------------------------------------------------------------------------
 # Function: Import-TestModule

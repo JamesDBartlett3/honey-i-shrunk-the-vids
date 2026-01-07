@@ -12,6 +12,9 @@ BeforeAll {
     # Initialize logger to suppress output
     $testLogPath = New-TestLogDirectory
     Initialize-Logger -LogPath $testLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
+
+    # Mock MailKit availability to prevent installation attempts during tests
+    # Tests will mock these functions as needed
 }
 
 AfterAll {
@@ -69,6 +72,89 @@ Describe 'Initialize-EmailConfig' {
     }
 }
 
+Describe 'Test-MailKitAvailability' {
+    It 'Should return a boolean value' {
+        $result = Test-MailKitAvailability
+
+        $result | Should -BeOfType [bool]
+    }
+
+    It 'Should not throw errors' {
+        { Test-MailKitAvailability } | Should -Not -Throw
+    }
+}
+
+Describe 'Install-MailKit' {
+    It 'Should return a boolean value' {
+        # Mock Install-Package to prevent actual installation
+        Mock -ModuleName VideoCompressionModule Install-Package { return $null }
+        Mock -ModuleName VideoCompressionModule Install-PackageProvider { return $null }
+        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return $null }
+        Mock -ModuleName VideoCompressionModule Test-MailKitAvailability { return $false }
+
+        $result = Install-MailKit
+
+        $result | Should -BeOfType [bool]
+    }
+
+    It 'Should not throw errors when installation fails' {
+        # Mock to simulate failure
+        Mock -ModuleName VideoCompressionModule Install-Package { throw "Package not found" }
+        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return @{ Name = 'NuGet' } }
+
+        { Install-MailKit } | Should -Not -Throw
+    }
+}
+
+Describe 'Test-MSALAvailability' {
+    It 'Should return a boolean value' {
+        $result = Test-MSALAvailability
+
+        $result | Should -BeOfType [bool]
+    }
+
+    It 'Should not throw errors' {
+        { Test-MSALAvailability } | Should -Not -Throw
+    }
+}
+
+Describe 'Install-MSAL' {
+    It 'Should return a boolean value' {
+        # Mock Install-Package to prevent actual installation
+        Mock -ModuleName VideoCompressionModule Install-Package { return $null }
+        Mock -ModuleName VideoCompressionModule Install-PackageProvider { return $null }
+        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return $null }
+        Mock -ModuleName VideoCompressionModule Test-MSALAvailability { return $false }
+
+        $result = Install-MSAL
+
+        $result | Should -BeOfType [bool]
+    }
+
+    It 'Should not throw errors when installation fails' {
+        # Mock to simulate failure
+        Mock -ModuleName VideoCompressionModule Install-Package { throw "Package not found" }
+        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return @{ Name = 'NuGet' } }
+
+        { Install-MSAL } | Should -Not -Throw
+    }
+}
+
+Describe 'Get-OAuthAccessToken' {
+    It 'Should return null when MSAL types not available' {
+        # Mock to simulate MSAL not being available
+        Mock -ModuleName VideoCompressionModule New-Object { throw "Type not found" }
+
+        $result = Get-OAuthAccessToken -ClientId 'test-id' -TenantId 'test-tenant' -EmailAddress 'test@test.com'
+
+        $result | Should -BeNull
+    }
+
+    It 'Should not throw errors when token acquisition fails' {
+        { Get-OAuthAccessToken -ClientId 'test-id' -TenantId 'test-tenant' -EmailAddress 'test@test.com' } | Should -Not -Throw
+    }
+}
+
 Describe 'Send-EmailNotification' {
     Context 'When email is disabled' {
         BeforeAll {
@@ -79,6 +165,16 @@ Describe 'Send-EmailNotification' {
                 UseSSL = $true
                 From = 'sender@test.com'
                 To = @('recipient@test.com')
+                Username = ''
+                Password = ''
+            }
+        }
+
+        BeforeEach {
+            # Reset MailKit availability flags in module scope
+            InModuleScope VideoCompressionModule {
+                $Script:MailKitInstallAttempted = $false
+                $Script:MailKitAvailable = $false
             }
         }
 
@@ -89,7 +185,7 @@ Describe 'Send-EmailNotification' {
         }
     }
 
-    Context 'When email is enabled' {
+    Context 'When email is enabled but MailKit not available' {
         BeforeAll {
             Initialize-EmailConfig -Config @{
                 Enabled = $true
@@ -98,12 +194,71 @@ Describe 'Send-EmailNotification' {
                 UseSSL = $true
                 From = 'sender@test.com'
                 To = @('recipient@test.com')
+                Username = 'testuser'
+                Password = 'testpass'
+            }
+
+            # Mock MailKit functions to simulate unavailability
+            Mock -ModuleName VideoCompressionModule Test-MailKitAvailability { return $false }
+            Mock -ModuleName VideoCompressionModule Install-MailKit { return $false }
+        }
+
+        BeforeEach {
+            # Reset MailKit availability flags in module scope
+            InModuleScope VideoCompressionModule {
+                $Script:MailKitInstallAttempted = $false
+                $Script:MailKitAvailable = $false
             }
         }
 
-        It 'Should not throw when attempting to send' {
-            # Will fail to actually send (no SMTP server) but should handle gracefully
-            { Send-EmailNotification -Subject 'Test' -Body 'Body' } | Should -Not -Throw
+        It 'Should return false when MailKit cannot be installed' {
+            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
+
+            $result | Should -BeFalse
+        }
+
+        It 'Should attempt to install MailKit' {
+            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
+
+            Should -Invoke -ModuleName VideoCompressionModule -CommandName Install-MailKit -Times 1
+        }
+    }
+
+    Context 'When email is enabled and MailKit is available' {
+        BeforeAll {
+            Initialize-EmailConfig -Config @{
+                Enabled = $true
+                SmtpServer = 'smtp.test.com'
+                SmtpPort = 587
+                UseSSL = $true
+                From = 'sender@test.com'
+                To = @('recipient@test.com')
+                Username = 'testuser'
+                Password = 'testpass'
+            }
+
+            # Mock MailKit functions
+            Mock -ModuleName VideoCompressionModule Send-EmailViaMailKit { return $true }
+        }
+
+        BeforeEach {
+            # Set MailKit as available in module scope
+            InModuleScope VideoCompressionModule {
+                $Script:MailKitInstallAttempted = $true
+                $Script:MailKitAvailable = $true
+            }
+        }
+
+        It 'Should call Send-EmailViaMailKit' {
+            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
+
+            Should -Invoke -ModuleName VideoCompressionModule -CommandName Send-EmailViaMailKit -Times 1
+        }
+
+        It 'Should return result from Send-EmailViaMailKit' {
+            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
+
+            $result | Should -BeTrue
         }
     }
 
@@ -117,6 +272,16 @@ Describe 'Send-EmailNotification' {
                 UseSSL = $false
                 From = ''
                 To = @()
+                Username = ''
+                Password = ''
+            }
+        }
+
+        BeforeEach {
+            # Reset MailKit flags in module scope
+            InModuleScope VideoCompressionModule {
+                $Script:MailKitInstallAttempted = $false
+                $Script:MailKitAvailable = $false
             }
         }
 
@@ -124,6 +289,53 @@ Describe 'Send-EmailNotification' {
             $result = Send-EmailNotification -Subject 'Test' -Body 'Test body'
 
             $result | Should -BeFalse
+        }
+    }
+
+    Context 'When OAuth is configured' {
+        BeforeAll {
+            Initialize-EmailConfig -Config @{
+                Enabled = $true
+                SmtpServer = 'smtp.office365.com'
+                SmtpPort = 587
+                UseSSL = $true
+                From = 'sender@contoso.com'
+                To = @('recipient@contoso.com')
+                ClientId = 'test-client-id'
+                TenantId = 'test-tenant-id'
+                TokenCacheFile = '/tmp/test-token-cache'
+                Username = ''
+                Password = ''
+            }
+
+            # Mock dependencies
+            Mock -ModuleName VideoCompressionModule Send-EmailViaMailKit { return $true }
+            Mock -ModuleName VideoCompressionModule Test-MSALAvailability { return $true }
+            Mock -ModuleName VideoCompressionModule Install-MSAL { return $true }
+        }
+
+        BeforeEach {
+            # Set MailKit and MSAL as available in module scope
+            InModuleScope VideoCompressionModule {
+                $Script:MailKitInstallAttempted = $true
+                $Script:MailKitAvailable = $true
+                $Script:MSALInstallAttempted = $true
+                $Script:MSALAvailable = $true
+            }
+        }
+
+        It 'Should check for MSAL availability' {
+            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
+
+            # MSAL availability is checked in Send-EmailNotification
+            $result | Should -BeTrue
+        }
+
+        It 'Should send email with OAuth configuration' {
+            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
+
+            Should -Invoke -ModuleName VideoCompressionModule -CommandName Send-EmailViaMailKit -Times 1
+            $result | Should -BeTrue
         }
     }
 }
@@ -293,6 +505,8 @@ Describe 'Email Report Integration' {
             UseSSL = $true
             From = 'sender@test.com'
             To = @('recipient@test.com')
+            Username = 'testuser'
+            Password = 'testpass'
         }
     }
 

@@ -14,7 +14,7 @@ BeforeAll {
     Import-Module PSSQLite -Force
 
     # Create test directories FIRST (before importing module)
-    $Script:TestTempDir = Join-Path -Path $env:TEMP -ChildPath "workflow-test-$(Get-Random)"
+    $Script:TestTempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "workflow-test-$(Get-Random)"
     $Script:TestArchiveDir = Join-Path -Path $Script:TestTempDir -ChildPath 'archive'
     $Script:TestLogDir = Join-Path -Path $Script:TestTempDir -ChildPath 'logs'
 

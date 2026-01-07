@@ -110,6 +110,11 @@ function Initialize-SPVidComp-Config {
             UseSSL = $Script:Config.Email.UseSSL
             From = $Script:Config.Email.From
             To = $Script:Config.Email.To
+            Username = $Script:Config.Email.Username
+            Password = $Script:Config.Email.Password
+            ClientId = $Script:Config.Email.ClientId
+            TenantId = $Script:Config.Email.TenantId
+            TokenCacheFile = $Script:Config.Email.TokenCacheFile
             SendOnCompletion = $Script:Config.Email.SendOnCompletion
             SendOnError = $Script:Config.Email.SendOnError
         }
@@ -461,8 +466,8 @@ function Test-SPVidComp-ArchiveIntegrity {
         Write-SPVidComp-Log -Message "Verifying archive integrity..." -Level 'Info'
 
         # Calculate hashes
-        $sourceHash = (Get-FileHash -Path $SourcePath -Algorithm SHA256).Hash
-        $destHash = (Get-FileHash -Path $DestinationPath -Algorithm SHA256).Hash
+        $sourceHash = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256).Hash
+        $destHash = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash
 
         $success = ($sourceHash -eq $destHash)
 
@@ -512,25 +517,63 @@ function Invoke-SPVidComp-Compression {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Compressing video: $InputPath" -Level 'Info'
+        Write-SPVidComp-Log -Message "Compressing video: $InputPath (timeout: $TimeoutMinutes minutes)" -Level 'Info'
 
-        # Build ffmpeg command
+        # Build ffmpeg command - Start-Process -ArgumentList handles quoting automatically
         $ffmpegArgs = @(
-            '-hwaccel', 'auto',
-            '-i', "`"$InputPath`"",
-            '-vf', "fps=$FrameRate",
-            '-c:v', $VideoCodec,
-            '-ac', '1',
-            '-ar', '22050',
-            "`"$OutputPath`""
+            '-y'                    # Auto-confirm file overwrites
+            '-hwaccel', 'auto'
+            '-i', $InputPath
+            '-vf', "fps=$FrameRate"
+            '-c:v', $VideoCodec
+            '-ac', '1'
+            '-ar', '22050'
+            $OutputPath
         )
 
         $ffmpegCommand = "ffmpeg $($ffmpegArgs -join ' ')"
-
         Write-SPVidComp-Log -Message "Executing: $ffmpegCommand" -Level 'Debug'
 
-        # Execute ffmpeg
-        $process = Start-Process -FilePath 'ffmpeg' -ArgumentList $ffmpegArgs -NoNewWindow -Wait -PassThru -RedirectStandardError "$env:TEMP\ffmpeg-error.log"
+        # Execute ffmpeg with timeout
+        $ffmpegErrorLog = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "ffmpeg-error.log"
+
+        # Start process in background to allow timeout monitoring
+        $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $processStartInfo.FileName = 'ffmpeg'
+        $processStartInfo.Arguments = $ffmpegArgs -join ' '
+        $processStartInfo.RedirectStandardError = $true
+        $processStartInfo.RedirectStandardOutput = $true
+        $processStartInfo.UseShellExecute = $false
+        $processStartInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $processStartInfo
+        $process.Start() | Out-Null
+
+        # Wait with timeout (convert minutes to milliseconds)
+        $timeoutMs = $TimeoutMinutes * 60 * 1000
+        $completed = $process.WaitForExit($timeoutMs)
+
+        if (-not $completed) {
+            # Timeout occurred
+            $process.Kill()
+            $process.WaitForExit()
+            Write-SPVidComp-Log -Message "Compression timed out after $TimeoutMinutes minutes" -Level 'Error'
+
+            # Save error log
+            $errorOutput = $process.StandardError.ReadToEnd()
+            Set-Content -LiteralPath $ffmpegErrorLog -Value $errorOutput -Force
+
+            return @{
+                Success = $false
+                Error = "Compression timed out after $TimeoutMinutes minutes"
+                ErrorLog = $errorOutput
+            }
+        }
+
+        # Save stderr to log file
+        $errorOutput = $process.StandardError.ReadToEnd()
+        Set-Content -LiteralPath $ffmpegErrorLog -Value $errorOutput -Force
 
         # Check result
         if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath $OutputPath)) {
@@ -548,13 +591,12 @@ function Invoke-SPVidComp-Compression {
             }
         }
         else {
-            $errorLog = Get-Content -LiteralPath "$env:TEMP\ffmpeg-error.log" -Raw -ErrorAction SilentlyContinue
-            Write-SPVidComp-Log -Message "Compression failed. Exit code: $($process.ExitCode). Error: $errorLog" -Level 'Error'
+            Write-SPVidComp-Log -Message "Compression failed. Exit code: $($process.ExitCode). Error: $errorOutput" -Level 'Error'
 
             return @{
                 Success = $false
                 Error = "ffmpeg exited with code $($process.ExitCode)"
-                ErrorLog = $errorLog
+                ErrorLog = $errorOutput
             }
         }
     }
@@ -581,9 +623,32 @@ function Test-SPVidComp-VideoIntegrity {
     try {
         Write-SPVidComp-Log -Message "Verifying video integrity: $VideoPath" -Level 'Debug'
 
-        # Run ffprobe to check video
-        $process = Start-Process -FilePath 'ffprobe' -ArgumentList @('-v', 'error', "`"$VideoPath`"") `
-            -NoNewWindow -Wait -PassThru -RedirectStandardError "$env:TEMP\ffprobe-error.log"
+        # Run ffprobe to check video - Start-Process -ArgumentList handles quoting automatically
+        $ffprobeErrorLog = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "ffprobe-error.log"
+
+        # Build ffprobe arguments
+        $ffprobeArgs = @(
+            '-v', 'error'
+            $VideoPath
+        )
+
+        # Start process with proper argument handling
+        $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $processStartInfo.FileName = 'ffprobe'
+        $processStartInfo.Arguments = $ffprobeArgs -join ' '
+        $processStartInfo.RedirectStandardError = $true
+        $processStartInfo.RedirectStandardOutput = $true
+        $processStartInfo.UseShellExecute = $false
+        $processStartInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $processStartInfo
+        $process.Start() | Out-Null
+        $process.WaitForExit()
+
+        # Get error output
+        $errorOutput = $process.StandardError.ReadToEnd()
+        Set-Content -LiteralPath $ffprobeErrorLog -Value $errorOutput -Force
 
         if ($process.ExitCode -eq 0) {
             Write-SPVidComp-Log -Message "Video integrity verified: No corruption detected" -Level 'Debug'
@@ -593,13 +658,12 @@ function Test-SPVidComp-VideoIntegrity {
             }
         }
         else {
-            $errorLog = Get-Content -LiteralPath "$env:TEMP\ffprobe-error.log" -Raw -ErrorAction SilentlyContinue
-            Write-SPVidComp-Log -Message "Video integrity check failed: $errorLog" -Level 'Error'
+            Write-SPVidComp-Log -Message "Video integrity check failed: $errorOutput" -Level 'Error'
 
             return @{
                 Success = $false
                 IsValid = $false
-                Error = $errorLog
+                Error = $errorOutput
             }
         }
     }
@@ -796,7 +860,32 @@ function Test-SPVidComp-DiskSpace {
     )
 
     try {
-        $drive = (Get-Item -LiteralPath $Path).PSDrive
+        # Handle non-existent paths by creating them or checking parent directory
+        $pathToCheck = $Path
+        if (-not (Test-Path -LiteralPath $Path)) {
+            # Try to create the directory if it doesn't exist
+            try {
+                New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
+                Write-SPVidComp-Log -Message "Created directory for disk space check: $Path" -Level 'Info'
+            }
+            catch {
+                # If we can't create it, use the parent directory that exists
+                $parent = Split-Path -Path $Path -Parent
+                while ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                    $parent = Split-Path -Path $parent -Parent
+                }
+                if ($parent) {
+                    $pathToCheck = $parent
+                    Write-SPVidComp-Log -Message "Using parent directory for disk space check: $pathToCheck" -Level 'Info'
+                } else {
+                    # Fall back to the root of the path
+                    $pathToCheck = [System.IO.Path]::GetPathRoot($Path)
+                    Write-SPVidComp-Log -Message "Using root path for disk space check: $pathToCheck" -Level 'Info'
+                }
+            }
+        }
+
+        $drive = (Get-Item -LiteralPath $pathToCheck).PSDrive
         $freeSpace = $drive.Free
 
         $hasSpace = ($freeSpace -ge $RequiredBytes)
@@ -1070,6 +1159,77 @@ function Get-SPVidComp-Config {
 }
 
 #------------------------------------------------------------------------------------------------------------------
+# Function: Test-SPVidComp-FFmpegAvailability
+# Purpose: Check if ffmpeg and ffprobe are available before processing
+#------------------------------------------------------------------------------------------------------------------
+function Test-SPVidComp-FFmpegAvailability {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [switch]$Detailed
+    )
+
+    $result = @{
+        FFmpegAvailable = $false
+        FFprobeAvailable = $false
+        FFmpegVersion = $null
+        FFprobeVersion = $null
+        AllAvailable = $false
+        Errors = @()
+    }
+
+    try {
+        # Test ffmpeg
+        try {
+            $ffmpegTest = & ffmpeg -version 2>&1 | Select-Object -First 1
+            if ($ffmpegTest -match 'ffmpeg version') {
+                $result.FFmpegAvailable = $true
+                if ($Detailed) {
+                    $result.FFmpegVersion = $ffmpegTest
+                }
+                Write-SPVidComp-Log -Message "ffmpeg is available: $ffmpegTest" -Level 'Debug'
+            }
+        }
+        catch {
+            $result.Errors += "ffmpeg not found: $_"
+            Write-SPVidComp-Log -Message "ffmpeg is not available: $_" -Level 'Warning'
+        }
+
+        # Test ffprobe
+        try {
+            $ffprobeTest = & ffprobe -version 2>&1 | Select-Object -First 1
+            if ($ffprobeTest -match 'ffprobe version') {
+                $result.FFprobeAvailable = $true
+                if ($Detailed) {
+                    $result.FFprobeVersion = $ffprobeTest
+                }
+                Write-SPVidComp-Log -Message "ffprobe is available: $ffprobeTest" -Level 'Debug'
+            }
+        }
+        catch {
+            $result.Errors += "ffprobe not found: $_"
+            Write-SPVidComp-Log -Message "ffprobe is not available: $_" -Level 'Warning'
+        }
+
+        $result.AllAvailable = $result.FFmpegAvailable -and $result.FFprobeAvailable
+
+        if ($result.AllAvailable) {
+            Write-SPVidComp-Log -Message "All required video processing tools are available" -Level 'Info'
+        }
+        else {
+            Write-SPVidComp-Log -Message "Missing required tools. ffmpeg: $($result.FFmpegAvailable), ffprobe: $($result.FFprobeAvailable)" -Level 'Error'
+        }
+
+        return $result
+    }
+    catch {
+        Write-SPVidComp-Log -Message "Error checking ffmpeg/ffprobe availability: $_" -Level 'Error'
+        $result.Errors += $_
+        return $result
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
 # Function: Set-SPVidComp-Config
 # Purpose: Store configuration in database
 #------------------------------------------------------------------------------------------------------------------
@@ -1101,4 +1261,4 @@ Export-ModuleMember -Function Initialize-SPVidComp-Config, Connect-SPVidComp-Sha
     Upload-SPVidComp-Video, Write-SPVidComp-Log, Send-SPVidComp-Notification, Test-SPVidComp-DiskSpace, `
     Get-SPVidComp-Statistics, Test-SPVidComp-ConfigExists, Get-SPVidComp-Config, Set-SPVidComp-Config, `
     Get-SPVidComp-PlatformDefaults, Get-SPVidComp-IllegalCharacters, Test-SPVidComp-FilenameCharacters, `
-    Repair-SPVidComp-Filename
+    Repair-SPVidComp-Filename, Test-SPVidComp-FFmpegAvailability

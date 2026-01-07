@@ -12,7 +12,7 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 - **Integrity Checking**: ffprobe verification to detect corruption
 - **Duration Validation**: Ensure compressed videos match original length
 - **Illegal Character Handling**: Automatic filename sanitization with configurable strategies
-- **Email Notifications**: Automated reports on completion and errors
+- **Email Notifications**: Automated reports on completion and errors (OAuth 2.0 with MFA support)
 - **Progress Tracking**: Resume from any interruption
 - **Comprehensive Logging**: Detailed logs with rotation
 
@@ -300,14 +300,28 @@ The interactive setup wizard collects configuration in these categories:
 The solution automatically detects platform-specific illegal filename characters using the native .NET method `[System.IO.Path]::GetInvalidFileNameChars()`, ensuring compatibility across Windows, macOS, and Linux.
 
 #### Email Notifications (Optional)
+
+**OAuth 2.0 Authentication (Recommended for Microsoft 365 with MFA):**
+- **Client ID**: Azure AD application client ID
+- **Tenant ID**: Azure AD tenant ID
+- **Token Cache File**: Path to store encrypted refresh tokens
+- See **[EMAIL-OAUTH-SETUP.md](EMAIL-OAUTH-SETUP.md)** for complete setup instructions
+
+**Basic Authentication (Fallback - requires App Passwords for MFA):**
+- **Username**: Email account username
+- **Password**: Email account password or app-specific password
+
+**SMTP Settings:**
 - **Enabled**: Enable/disable email notifications
-- **SMTP Server**: Mail server address
+- **SMTP Server**: Mail server address (e.g., `smtp.office365.com`)
 - **SMTP Port**: Port number (default: 587)
-- **Use SSL**: Enable SSL/TLS (recommended)
+- **Use SSL**: Enable SSL/TLS (recommended: `$true`)
 - **From Address**: Sender email
 - **To Addresses**: Recipients (comma-separated)
 - **Send on Completion**: Notify when processing finishes
 - **Send on Error**: Notify on errors
+
+**Note**: For Microsoft 365 accounts with MFA, OAuth 2.0 is strongly recommended. See [EMAIL-OAUTH-SETUP.md](EMAIL-OAUTH-SETUP.md) for step-by-step setup instructions including Azure AD app registration.
 
 #### Logging Settings
 - **Log Level**: Debug, Info, Warning, or Error

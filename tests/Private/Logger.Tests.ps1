@@ -20,7 +20,7 @@ Describe 'Initialize-Logger' {
     }
 
     It 'Should create log directory if it does not exist' {
-        $newLogPath = Join-Path -Path $env:TEMP -ChildPath "new-log-dir-$(Get-Random)"
+        $newLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "new-log-dir-$(Get-Random)"
 
         Initialize-Logger -LogPath $newLogPath -ConsoleOutput $false
 

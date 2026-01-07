@@ -36,7 +36,15 @@
         'Write-SPVidComp-Log',
         'Send-SPVidComp-Notification',
         'Test-SPVidComp-DiskSpace',
-        'Get-SPVidComp-Statistics'
+        'Get-SPVidComp-Statistics',
+        'Get-SPVidComp-PlatformDefaults',
+        'Get-SPVidComp-IllegalCharacters',
+        'Test-SPVidComp-FilenameCharacters',
+        'Repair-SPVidComp-Filename',
+        'Test-SPVidComp-ConfigExists',
+        'Get-SPVidComp-Config',
+        'Set-SPVidComp-Config',
+        'Test-SPVidComp-FFmpegAvailability'
     )
 
     # Cmdlets to export

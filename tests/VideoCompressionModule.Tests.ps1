@@ -202,7 +202,7 @@ Describe 'Repair-SPVidComp-Filename' {
 Describe 'Test-SPVidComp-DiskSpace' {
     BeforeAll {
         # Create a temp directory that exists
-        $Script:TestTempDir = Join-Path -Path $env:TEMP -ChildPath "diskspace-test-$(Get-Random)"
+        $Script:TestTempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "diskspace-test-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:TestTempDir -Force | Out-Null
     }
 
@@ -243,7 +243,7 @@ Describe 'Test-SPVidComp-DiskSpace' {
 #------------------------------------------------------------------------------------------------------------------
 Describe 'Test-SPVidComp-ArchiveIntegrity' {
     BeforeAll {
-        $Script:TestDir = Join-Path -Path $env:TEMP -ChildPath "archive-test-$(Get-Random)"
+        $Script:TestDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "archive-test-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:TestDir -Force | Out-Null
 
         # Create source file
@@ -305,7 +305,7 @@ Describe 'Test-SPVidComp-ArchiveIntegrity' {
 #------------------------------------------------------------------------------------------------------------------
 Describe 'Copy-SPVidComp-Archive' {
     BeforeAll {
-        $Script:CopyTestDir = Join-Path -Path $env:TEMP -ChildPath "copy-archive-test-$(Get-Random)"
+        $Script:CopyTestDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "copy-archive-test-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:CopyTestDir -Force | Out-Null
 
         # Create source file using helper function
@@ -519,7 +519,7 @@ Describe 'Configuration Functions' {
 
     Describe 'Test-SPVidComp-ConfigExists' {
         It 'Should return false when no config exists' {
-            $freshDb = New-TestDatabase -Path (Join-Path -Path $env:TEMP -ChildPath "fresh-config-$(Get-Random).db")
+            $freshDb = New-TestDatabase -Path (Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "fresh-config-$(Get-Random).db")
             Initialize-SPVidComp-Catalog -DatabasePath $freshDb
 
             $result = Test-SPVidComp-ConfigExists

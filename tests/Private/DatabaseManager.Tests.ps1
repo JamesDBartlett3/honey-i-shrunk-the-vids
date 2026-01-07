@@ -74,7 +74,7 @@ Describe 'Initialize-Database' {
     }
 
     It 'Should create directory if it does not exist' {
-        $nestedPath = Join-Path -Path $env:TEMP -ChildPath "nested\test\path\test-$(Get-Random).db"
+        $nestedPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nested\test\path\test-$(Get-Random).db"
 
         Initialize-Database -DatabasePath $nestedPath
 
@@ -418,7 +418,7 @@ Describe 'Configuration Functions' {
 
         It 'Should return false when no config exists' {
             # Use a fresh database for this specific test
-            $freshDb = New-TestDatabase -Path (Join-Path -Path $env:TEMP -ChildPath "fresh-$(Get-Random).db")
+            $freshDb = New-TestDatabase -Path (Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "fresh-$(Get-Random).db")
             Initialize-Database -DatabasePath $freshDb
 
             $result = Test-ConfigExists
