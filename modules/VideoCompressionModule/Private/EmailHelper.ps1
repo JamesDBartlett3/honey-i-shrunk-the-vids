@@ -62,39 +62,39 @@ function Install-MailKit {
     param()
 
     try {
-        Write-LogEntry -Message "MailKit not found. Attempting to install MailKit package..." -Level 'Info'
+        Write-SPVidCompLogEntry -Message "MailKit not found. Attempting to install MailKit package..." -Level 'Info'
 
         # Check if PackageManagement is available
         if (-not (Get-Module -ListAvailable -Name PackageManagement)) {
-            Write-LogEntry -Message "PackageManagement module not available. Cannot auto-install MailKit." -Level 'Error'
+            Write-SPVidCompLogEntry -Message "PackageManagement module not available. Cannot auto-install MailKit." -Level 'Error'
             return $false
         }
 
         # Register NuGet provider if not already registered
         $nugetProvider = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
         if (-not $nugetProvider) {
-            Write-LogEntry -Message "Installing NuGet package provider..." -Level 'Info'
+            Write-SPVidCompLogEntry -Message "Installing NuGet package provider..." -Level 'Info'
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
         }
 
         # Install MailKit and MimeKit packages
-        Write-LogEntry -Message "Installing MailKit package (this may take a moment)..." -Level 'Info'
+        Write-SPVidCompLogEntry -Message "Installing MailKit package (this may take a moment)..." -Level 'Info'
         Install-Package -Name MailKit -Source nuget.org -Force -Scope CurrentUser -SkipDependencies:$false -ErrorAction Stop | Out-Null
 
         # Verify installation
         $installed = Test-MailKitAvailability
         if ($installed) {
-            Write-LogEntry -Message "MailKit installed successfully" -Level 'Info'
+            Write-SPVidCompLogEntry -Message "MailKit installed successfully" -Level 'Info'
             $Script:MailKitAvailable = $true
             return $true
         }
         else {
-            Write-LogEntry -Message "MailKit installation completed but library not accessible" -Level 'Warning'
+            Write-SPVidCompLogEntry -Message "MailKit installation completed but library not accessible" -Level 'Warning'
             return $false
         }
     }
     catch {
-        Write-LogEntry -Message "Failed to install MailKit: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to install MailKit: $_" -Level 'Error'
         return $false
     }
 }
@@ -134,39 +134,39 @@ function Install-MSAL {
     param()
 
     try {
-        Write-LogEntry -Message "MSAL not found. Attempting to install Microsoft.Identity.Client package..." -Level 'Info'
+        Write-SPVidCompLogEntry -Message "MSAL not found. Attempting to install Microsoft.Identity.Client package..." -Level 'Info'
 
         # Check if PackageManagement is available
         if (-not (Get-Module -ListAvailable -Name PackageManagement)) {
-            Write-LogEntry -Message "PackageManagement module not available. Cannot auto-install MSAL." -Level 'Error'
+            Write-SPVidCompLogEntry -Message "PackageManagement module not available. Cannot auto-install MSAL." -Level 'Error'
             return $false
         }
 
         # Register NuGet provider if not already registered
         $nugetProvider = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
         if (-not $nugetProvider) {
-            Write-LogEntry -Message "Installing NuGet package provider..." -Level 'Info'
+            Write-SPVidCompLogEntry -Message "Installing NuGet package provider..." -Level 'Info'
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
         }
 
         # Install MSAL package
-        Write-LogEntry -Message "Installing Microsoft.Identity.Client package (this may take a moment)..." -Level 'Info'
+        Write-SPVidCompLogEntry -Message "Installing Microsoft.Identity.Client package (this may take a moment)..." -Level 'Info'
         Install-Package -Name Microsoft.Identity.Client -Source nuget.org -Force -Scope CurrentUser -SkipDependencies:$false -ErrorAction Stop | Out-Null
 
         # Verify installation
         $installed = Test-MSALAvailability
         if ($installed) {
-            Write-LogEntry -Message "Microsoft.Identity.Client installed successfully" -Level 'Info'
+            Write-SPVidCompLogEntry -Message "Microsoft.Identity.Client installed successfully" -Level 'Info'
             $Script:MSALAvailable = $true
             return $true
         }
         else {
-            Write-LogEntry -Message "Microsoft.Identity.Client installation completed but library not accessible" -Level 'Warning'
+            Write-SPVidCompLogEntry -Message "Microsoft.Identity.Client installation completed but library not accessible" -Level 'Warning'
             return $false
         }
     }
     catch {
-        Write-LogEntry -Message "Failed to install Microsoft.Identity.Client: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to install Microsoft.Identity.Client: $_" -Level 'Error'
         return $false
     }
 }
@@ -194,11 +194,11 @@ function Get-OAuthAccessToken {
     try {
         # Check if we have a cached valid token
         if ($Script:CachedAccessToken -and $Script:TokenExpiry -and ((Get-Date) -lt $Script:TokenExpiry)) {
-            Write-LogEntry -Message "Using cached access token (expires: $($Script:TokenExpiry))" -Level 'Debug'
+            Write-SPVidCompLogEntry -Message "Using cached access token (expires: $($Script:TokenExpiry))" -Level 'Debug'
             return $Script:CachedAccessToken
         }
 
-        Write-LogEntry -Message "Acquiring OAuth access token via browser authentication..." -Level 'Info'
+        Write-SPVidCompLogEntry -Message "Acquiring OAuth access token via browser authentication..." -Level 'Info'
 
         # Build MSAL public client application
         $authority = "https://login.microsoftonline.com/$TenantId"
@@ -222,10 +222,10 @@ function Get-OAuthAccessToken {
                 $cacheData = Get-Content -LiteralPath $TokenCacheFile -Raw -ErrorAction Stop
                 $decryptedData = ConvertFrom-SecureString -SecureString (ConvertTo-SecureString -String $cacheData) -AsPlainText
                 $clientApp.UserTokenCache.DeserializeMsalV3($decryptedData)
-                Write-LogEntry -Message "Loaded token cache from: $TokenCacheFile" -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Loaded token cache from: $TokenCacheFile" -Level 'Debug'
             }
             catch {
-                Write-LogEntry -Message "Could not load token cache, will acquire new token: $_" -Level 'Warning'
+                Write-SPVidCompLogEntry -Message "Could not load token cache, will acquire new token: $_" -Level 'Warning'
             }
         }
 
@@ -233,23 +233,23 @@ function Get-OAuthAccessToken {
         $accounts = $clientApp.GetAccountsAsync().GetAwaiter().GetResult()
         if ($accounts.Count -gt 0) {
             try {
-                Write-LogEntry -Message "Attempting silent token acquisition..." -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Attempting silent token acquisition..." -Level 'Debug'
                 $silentRequest = $clientApp.AcquireTokenSilent($scopes, $accounts[0])
                 $result = $silentRequest.ExecuteAsync().GetAwaiter().GetResult()
-                Write-LogEntry -Message "Successfully acquired token silently" -Level 'Info'
+                Write-SPVidCompLogEntry -Message "Successfully acquired token silently" -Level 'Info'
             }
             catch {
-                Write-LogEntry -Message "Silent acquisition failed, will use interactive flow: $_" -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Silent acquisition failed, will use interactive flow: $_" -Level 'Debug'
                 $result = $null
             }
         }
 
         # If silent acquisition failed, use interactive browser flow
         if (-not $result) {
-            Write-LogEntry -Message "Opening browser for authentication (MFA supported)..." -Level 'Info'
+            Write-SPVidCompLogEntry -Message "Opening browser for authentication (MFA supported)..." -Level 'Info'
             $interactiveRequest = $clientApp.AcquireTokenInteractive($scopes).WithLoginHint($EmailAddress).WithPrompt([Microsoft.Identity.Client.Prompt]::SelectAccount)
             $result = $interactiveRequest.ExecuteAsync().GetAwaiter().GetResult()
-            Write-LogEntry -Message "Successfully acquired token interactively" -Level 'Info'
+            Write-SPVidCompLogEntry -Message "Successfully acquired token interactively" -Level 'Info'
         }
 
         # Save token cache to file
@@ -265,10 +265,10 @@ function Get-OAuthAccessToken {
                 }
 
                 Set-Content -LiteralPath $TokenCacheFile -Value $encryptedData -Force
-                Write-LogEntry -Message "Saved token cache to: $TokenCacheFile" -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Saved token cache to: $TokenCacheFile" -Level 'Debug'
             }
             catch {
-                Write-LogEntry -Message "Could not save token cache: $_" -Level 'Warning'
+                Write-SPVidCompLogEntry -Message "Could not save token cache: $_" -Level 'Warning'
             }
         }
 
@@ -276,11 +276,11 @@ function Get-OAuthAccessToken {
         $Script:CachedAccessToken = $result.AccessToken
         $Script:TokenExpiry = $result.ExpiresOn.DateTime
 
-        Write-LogEntry -Message "Access token acquired successfully (expires: $($Script:TokenExpiry))" -Level 'Info'
+        Write-SPVidCompLogEntry -Message "Access token acquired successfully (expires: $($Script:TokenExpiry))" -Level 'Info'
         return $result.AccessToken
     }
     catch {
-        Write-LogEntry -Message "Failed to acquire OAuth access token: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to acquire OAuth access token: $_" -Level 'Error'
         return $null
     }
 }
@@ -307,7 +307,7 @@ function Send-EmailNotification {
 
     try {
         if (-not $Script:EmailConfig -or -not $Script:EmailConfig.Enabled) {
-            Write-LogEntry -Message "Email notifications are disabled" -Level 'Debug'
+            Write-SPVidCompLogEntry -Message "Email notifications are disabled" -Level 'Debug'
             return $false
         }
 
@@ -317,17 +317,17 @@ function Send-EmailNotification {
             $Script:MailKitAvailable = Test-MailKitAvailability
 
             if (-not $Script:MailKitAvailable) {
-                Write-LogEntry -Message "MailKit not available. Email functionality requires MailKit package." -Level 'Warning'
+                Write-SPVidCompLogEntry -Message "MailKit not available. Email functionality requires MailKit package." -Level 'Warning'
                 $installed = Install-MailKit
                 if (-not $installed) {
-                    Write-LogEntry -Message "Cannot send email: MailKit package not available and installation failed" -Level 'Error'
+                    Write-SPVidCompLogEntry -Message "Cannot send email: MailKit package not available and installation failed" -Level 'Error'
                     return $false
                 }
             }
         }
 
         if (-not $Script:MailKitAvailable) {
-            Write-LogEntry -Message "Cannot send email: MailKit package not available" -Level 'Error'
+            Write-SPVidCompLogEntry -Message "Cannot send email: MailKit package not available" -Level 'Error'
             return $false
         }
 
@@ -339,17 +339,17 @@ function Send-EmailNotification {
                 $Script:MSALAvailable = Test-MSALAvailability
 
                 if (-not $Script:MSALAvailable) {
-                    Write-LogEntry -Message "MSAL not available. OAuth authentication requires Microsoft.Identity.Client package." -Level 'Warning'
+                    Write-SPVidCompLogEntry -Message "MSAL not available. OAuth authentication requires Microsoft.Identity.Client package." -Level 'Warning'
                     $installed = Install-MSAL
                     if (-not $installed) {
-                        Write-LogEntry -Message "Cannot send email with OAuth: MSAL package not available and installation failed" -Level 'Error'
+                        Write-SPVidCompLogEntry -Message "Cannot send email with OAuth: MSAL package not available and installation failed" -Level 'Error'
                         return $false
                     }
                 }
             }
 
             if (-not $Script:MSALAvailable) {
-                Write-LogEntry -Message "Cannot send email with OAuth: MSAL package not available" -Level 'Error'
+                Write-SPVidCompLogEntry -Message "Cannot send email with OAuth: MSAL package not available" -Level 'Error'
                 return $false
             }
         }
@@ -359,7 +359,7 @@ function Send-EmailNotification {
         return $result
     }
     catch {
-        Write-LogEntry -Message "Failed to send email notification: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to send email notification: $_" -Level 'Error'
         return $false
     }
 }
@@ -414,7 +414,7 @@ function Send-EmailViaMailKit {
                 $null = $bodyBuilder.Attachments.Add($attachment)
             }
             else {
-                Write-LogEntry -Message "Attachment not found, skipping: $attachment" -Level 'Warning'
+                Write-SPVidCompLogEntry -Message "Attachment not found, skipping: $attachment" -Level 'Warning'
             }
         }
 
@@ -437,7 +437,7 @@ function Send-EmailViaMailKit {
             # Authenticate using OAuth or username/password
             if ($Script:EmailConfig.ClientId -and $Script:EmailConfig.TenantId) {
                 # OAuth 2.0 authentication
-                Write-LogEntry -Message "Using OAuth 2.0 authentication" -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Using OAuth 2.0 authentication" -Level 'Debug'
 
                 $accessToken = Get-OAuthAccessToken `
                     -ClientId $Script:EmailConfig.ClientId `
@@ -452,21 +452,21 @@ function Send-EmailViaMailKit {
                 # Create OAuth2 SASL mechanism
                 $oauth2 = New-Object MailKit.Security.SaslMechanismOAuth2($Script:EmailConfig.From, $accessToken)
                 $smtpClient.Authenticate($oauth2)
-                Write-LogEntry -Message "Authenticated via OAuth 2.0" -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Authenticated via OAuth 2.0" -Level 'Debug'
             }
             elseif ($Script:EmailConfig.Username -and $Script:EmailConfig.Password) {
                 # Username/password authentication
-                Write-LogEntry -Message "Using username/password authentication" -Level 'Debug'
+                Write-SPVidCompLogEntry -Message "Using username/password authentication" -Level 'Debug'
                 $smtpClient.Authenticate($Script:EmailConfig.Username, $Script:EmailConfig.Password)
             }
             else {
-                Write-LogEntry -Message "No authentication configured - attempting to send without auth" -Level 'Warning'
+                Write-SPVidCompLogEntry -Message "No authentication configured - attempting to send without auth" -Level 'Warning'
             }
 
             # Send message
             $null = $smtpClient.Send($message)
 
-            Write-LogEntry -Message "Email notification sent successfully to: $($Script:EmailConfig.To -join ', ')" -Level 'Info'
+            Write-SPVidCompLogEntry -Message "Email notification sent successfully to: $($Script:EmailConfig.To -join ', ')" -Level 'Info'
             return $true
         }
         finally {
@@ -477,7 +477,7 @@ function Send-EmailViaMailKit {
         }
     }
     catch {
-        Write-LogEntry -Message "Failed to send email via MailKit: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to send email via MailKit: $_" -Level 'Error'
         return $false
     }
 }
@@ -589,7 +589,7 @@ function Build-CompletionReport {
         return $html
     }
     catch {
-        Write-LogEntry -Message "Failed to build completion report: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to build completion report: $_" -Level 'Error'
         return "<html><body><h1>Error generating report</h1></body></html>"
     }
 }
@@ -654,7 +654,7 @@ function Build-ErrorReport {
         return $html
     }
     catch {
-        Write-LogEntry -Message "Failed to build error report: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to build error report: $_" -Level 'Error'
         return "<html><body><h1>Error generating error report</h1></body></html>"
     }
 }

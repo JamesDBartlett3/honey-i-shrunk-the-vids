@@ -1,14 +1,13 @@
 #------------------------------------------------------------------------------------------------------------------
-# Logger.ps1 - Logging infrastructure for SharePoint Video Compression
+# Logger.ps1 - Database-based logging infrastructure for SharePoint Video Compression
 #------------------------------------------------------------------------------------------------------------------
 
 # Module-level variables
 $Script:LogConfig = @{
-    LogPath = $null
+    DatabasePath = $null
+    ErrorLogPath = $null
     LogLevel = 'Info'
     ConsoleOutput = $false
-    FileOutput = $true
-    MaxLogSizeMB = 100
     LogRetentionDays = 30
 }
 
@@ -20,62 +19,59 @@ $Script:LogLevels = @{
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Initialize-Logger
-# Purpose: Setup logging configuration
+# Function: Initialize-SPVidCompLogger # Purpose: Setup logging configuration
 #------------------------------------------------------------------------------------------------------------------
-function Initialize-Logger {
+function Initialize-SPVidCompLogger {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$LogPath,
+        [string]$DatabasePath,
 
         [Parameter(Mandatory = $false)]
         [ValidateSet('Debug', 'Info', 'Warning', 'Error')]
         [string]$LogLevel = 'Info',
 
         [Parameter(Mandatory = $false)]
-        [bool]$ConsoleOutput = $true,
+        [bool]$ConsoleOutput = $false,
 
         [Parameter(Mandatory = $false)]
-        [bool]$FileOutput = $true,
+        [int]$LogRetentionDays = 30,
 
         [Parameter(Mandatory = $false)]
-        [int]$MaxLogSizeMB = 100,
-
-        [Parameter(Mandatory = $false)]
-        [int]$LogRetentionDays = 30
+        [string]$ErrorLogPath = $null
     )
 
     try {
-        # Ensure log directory exists
-        if (-not (Test-Path -LiteralPath $LogPath)) {
-            New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
-        }
-
         # Set configuration
-        $Script:LogConfig.LogPath = $LogPath
+        $Script:LogConfig.DatabasePath = $DatabasePath
         $Script:LogConfig.LogLevel = $LogLevel
         $Script:LogConfig.ConsoleOutput = $ConsoleOutput
-        $Script:LogConfig.FileOutput = $FileOutput
-        $Script:LogConfig.MaxLogSizeMB = $MaxLogSizeMB
         $Script:LogConfig.LogRetentionDays = $LogRetentionDays
 
-        # Clean up old logs
-        Clean-OldLogs
+        # Set error log path (for database failures only)
+        if (-not $ErrorLogPath) {
+            $ErrorLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'VideoCompressionErrors'
+        }
+        $Script:LogConfig.ErrorLogPath = $ErrorLogPath
 
-        Write-LogEntry -Message "Logger initialized successfully" -Level 'Info'
+        # Ensure error log directory exists
+        if (-not (Test-Path -LiteralPath $ErrorLogPath)) {
+            New-Item -ItemType Directory -Path $ErrorLogPath -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+
+        Write-SPVidCompLogEntry -Message "Logger initialized successfully (database-based logging)" -Level 'Info'
     }
     catch {
-        Write-Error "Failed to initialize logger: $_"
+        # If logger initialization fails, write to error file
+        Write-SPVidCompErrorLogFile -Message "Failed to initialize logger: $_"
         throw
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Write-LogEntry
-# Purpose: Write a log entry with timestamp and level
+# Function: Write-SPVidCompLogEntry # Purpose: Write a log entry to the database (with file fallback for database errors)
 #------------------------------------------------------------------------------------------------------------------
-function Write-LogEntry {
+function Write-SPVidCompLogEntry {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -86,7 +82,10 @@ function Write-LogEntry {
         [string]$Level = 'Info',
 
         [Parameter(Mandatory = $false)]
-        [string]$Component = ''
+        [string]$Component = '',
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = $null
     )
 
     # Check if this log level should be written
@@ -98,7 +97,7 @@ function Write-LogEntry {
     $componentPart = if ($Component) { " [$Component]" } else { "" }
     $logEntry = "$timestamp [$Level]$componentPart $Message"
 
-    # Write to console
+    # Write to console if enabled
     if ($Script:LogConfig.ConsoleOutput) {
         switch ($Level) {
             'Debug' { Write-Host $logEntry -ForegroundColor Gray }
@@ -108,90 +107,68 @@ function Write-LogEntry {
         }
     }
 
-    # Write to file
-    if ($Script:LogConfig.FileOutput -and $Script:LogConfig.LogPath) {
+    # Write to database
+    if ($Script:LogConfig.DatabasePath) {
         try {
-            # Ensure log directory exists
-            if (-not (Test-Path -LiteralPath $Script:LogConfig.LogPath)) {
-                New-Item -ItemType Directory -Path $Script:LogConfig.LogPath -Force -ErrorAction Stop | Out-Null
+            $success = Add-SPVidCompLogEntry -Message $Message -Level $Level -Component $Component -Context $Context
+
+            if (-not $success) {
+                # Database write failed, fallback to error log file
+                Write-SPVidCompErrorLogFile -Message $logEntry
             }
-
-            $logFile = Join-Path -Path $Script:LogConfig.LogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-
-            # Check log file size and rotate if needed
-            if (Test-Path -LiteralPath $logFile) {
-                $fileInfo = Get-Item -LiteralPath $logFile
-                $fileSizeMB = $fileInfo.Length / 1MB
-
-                if ($fileSizeMB -ge $Script:LogConfig.MaxLogSizeMB) {
-                    Rotate-LogFile -LogFile $logFile
-                }
-            }
-
-            # Write log entry
-            Add-Content -LiteralPath $logFile -Value $logEntry -ErrorAction Stop
         }
         catch {
-            Write-Warning "Failed to write to log file: $_"
+            # Database write failed, fallback to error log file
+            Write-SPVidCompErrorLogFile -Message "$logEntry`nDatabase error: $_"
         }
+    }
+    else {
+        # Logger not initialized with database path, write to error log
+        Write-SPVidCompErrorLogFile -Message $logEntry
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Rotate-LogFile
-# Purpose: Rotate log file when it exceeds size limit
+# Function: Write-SPVidCompErrorLogFile # Purpose: Write to error log file (only used when database logging fails)
 #------------------------------------------------------------------------------------------------------------------
-function Rotate-LogFile {
+function Write-SPVidCompErrorLogFile {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$LogFile
+        [string]$Message
     )
 
     try {
-        $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-        $rotatedFile = "$LogFile.$timestamp"
-
-        Move-Item -Path $LogFile -Destination $rotatedFile -Force
-
-        Write-LogEntry -Message "Log file rotated to: $rotatedFile" -Level 'Info'
-    }
-    catch {
-        Write-Warning "Failed to rotate log file: $_"
-    }
-}
-
-#------------------------------------------------------------------------------------------------------------------
-# Function: Clean-OldLogs
-# Purpose: Remove logs older than retention period
-#------------------------------------------------------------------------------------------------------------------
-function Clean-OldLogs {
-    [CmdletBinding()]
-    param()
-
-    try {
-        if (-not $Script:LogConfig.LogPath) { return }
-
-        $cutoffDate = (Get-Date).AddDays(-$Script:LogConfig.LogRetentionDays)
-        $logFiles = Get-ChildItem -Path $Script:LogConfig.LogPath -Filter "video-compression-*.log*" -ErrorAction SilentlyContinue
-
-        foreach ($file in $logFiles) {
-            if ($file.LastWriteTime -lt $cutoffDate) {
-                Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
-                Write-LogEntry -Message "Removed old log file: $($file.Name)" -Level 'Debug'
-            }
+        if (-not $Script:LogConfig.ErrorLogPath) {
+            # No error log path configured, output to console as last resort
+            Write-Warning "DATABASE LOGGING FAILED - No error log path configured. Message: $Message"
+            return
         }
+
+        # Ensure error log directory exists
+        if (-not (Test-Path -LiteralPath $Script:LogConfig.ErrorLogPath)) {
+            New-Item -ItemType Directory -Path $Script:LogConfig.ErrorLogPath -Force -ErrorAction Stop | Out-Null
+        }
+
+        $errorLogFile = Join-Path -Path $Script:LogConfig.ErrorLogPath -ChildPath "database-errors-$(Get-Date -Format 'yyyyMMdd').log"
+        $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        $entry = "$timestamp [DATABASE_ERROR] $Message"
+
+        Add-Content -LiteralPath $errorLogFile -Value $entry -ErrorAction Stop
+
+        # Notify user where to find error log
+        Write-Warning "DATABASE LOGGING FAILED - Error logged to: $errorLogFile"
     }
     catch {
-        Write-Warning "Failed to clean old logs: $_"
+        # Ultimate fallback - can't even write to error log file
+        Write-Warning "CRITICAL: Cannot write to database OR error log file. Message: $Message. Error: $_"
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-LogHistory
-# Purpose: Retrieve log entries (for debugging/reporting)
+# Function: Get-SPVidCompLogHistory # Purpose: Retrieve log entries from database
 #------------------------------------------------------------------------------------------------------------------
-function Get-LogHistory {
+function Get-SPVidCompLogHistory {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
@@ -199,35 +176,63 @@ function Get-LogHistory {
 
         [Parameter(Mandatory = $false)]
         [ValidateSet('Debug', 'Info', 'Warning', 'Error')]
-        [string]$Level
+        [string]$Level,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Component,
+
+        [Parameter(Mandatory = $false)]
+        [Nullable[datetime]]$StartDate,
+
+        [Parameter(Mandatory = $false)]
+        [Nullable[datetime]]$EndDate
     )
 
     try {
-        if (-not $Script:LogConfig.LogPath) {
-            Write-Warning "Logger not initialized"
-            return
+        if (-not $Script:LogConfig.DatabasePath) {
+            Write-Warning "Logger not initialized with database path"
+            return @()
         }
 
-        $logFile = Join-Path -Path $Script:LogConfig.LogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-
-        if (-not (Test-Path -LiteralPath $logFile)) {
-            Write-Warning "Log file not found: $logFile"
-            return
+        $params = @{
+            Limit = $Last
         }
 
-        $entries = Get-Content -LiteralPath $logFile -Tail $Last
+        if ($Level) { $params['Level'] = $Level }
+        if ($Component) { $params['Component'] = $Component }
+        if ($PSBoundParameters.ContainsKey('StartDate')) { $params['StartDate'] = $StartDate }
+        if ($PSBoundParameters.ContainsKey('EndDate')) { $params['EndDate'] = $EndDate }
 
-        if ($Level) {
-            $entries = $entries | Where-Object { $_ -match "\[$Level\]" }
-        }
-
-        return $entries
+        return Get-SPVidCompLogEntries @params
     }
     catch {
-        Write-Error "Failed to retrieve log history: $_"
-        return $null
+        Write-Error "Failed to retrieve log history from database: $_"
+        return @()
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Clear-SPVidCompOldLogs # Purpose: Remove database log entries older than retention period
+#------------------------------------------------------------------------------------------------------------------
+function Clear-SPVidCompOldLogs {
+    [CmdletBinding()]
+    param()
+
+    try {
+        if (-not $Script:LogConfig.DatabasePath) {
+            return
+        }
+
+        $result = Clear-SPVidCompOldLogEntries -RetentionDays $Script:LogConfig.LogRetentionDays
+
+        if ($result) {
+            Write-SPVidCompLogEntry -Message "Successfully cleaned up old log entries" -Level 'Debug'
+        }
+    }
+    catch {
+        Write-Warning "Failed to clean old database logs: $_"
     }
 }
 
 # Export functions
-Export-ModuleMember -Function Initialize-Logger, Write-LogEntry, Get-LogHistory
+Export-ModuleMember -Function Initialize-SPVidCompLogger, Write-SPVidCompLogEntry, Get-SPVidCompLogHistory, Clear-SPVidCompOldLogs

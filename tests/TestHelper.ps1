@@ -13,6 +13,9 @@ $Script:TempPath = [System.IO.Path]::GetTempPath()
 # Test database path (in-memory or temp file)
 $Script:TestDatabasePath = Join-Path -Path $Script:TempPath -ChildPath "test-video-catalog-$(Get-Random).db"
 
+# Global test database path (for tests that expect this variable name)
+$Script:GlobalTestDbPath = $Script:TestDatabasePath
+
 # Test log path
 $Script:TestLogPath = Join-Path -Path $Script:TempPath -ChildPath "test-logs-$(Get-Random)"
 
@@ -178,7 +181,6 @@ function Get-TestConfig {
         'sharepoint_recursive' = 'True'
         'paths_temp_download' = '/tmp/test'
         'paths_external_archive' = '/tmp/archive'
-        'paths_log' = '/tmp/logs'
         'compression_frame_rate' = '10'
         'compression_video_codec' = 'libx265'
         'compression_timeout_minutes' = '60'
@@ -198,9 +200,7 @@ function Get-TestConfig {
         'email_send_on_error' = 'True'
         'logging_log_level' = 'Info'
         'logging_console_output' = 'False'
-        'logging_file_output' = 'True'
-        'logging_max_log_size_mb' = '100'
-        'logging_log_retention_days' = '30'
+        'logging_retention_days' = '30'
         'advanced_cleanup_temp_files' = 'True'
         'advanced_verify_checksums' = 'True'
         'advanced_dry_run' = 'False'

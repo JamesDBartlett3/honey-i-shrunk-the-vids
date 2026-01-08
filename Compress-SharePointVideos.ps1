@@ -91,7 +91,6 @@ function Show-CurrentConfig {
     Write-Host "`nPaths:" -ForegroundColor Yellow
     Write-Host "  Temp Download      : $($Config['paths_temp_download'])" -ForegroundColor White
     Write-Host "  External Archive   : $($Config['paths_external_archive'])" -ForegroundColor White
-    Write-Host "  Log Path           : $($Config['paths_log'])" -ForegroundColor White
 
     Write-Host "`nCompression:" -ForegroundColor Yellow
     Write-Host "  Frame Rate         : $($Config['compression_frame_rate'])" -ForegroundColor White
@@ -155,7 +154,6 @@ function Initialize-Configuration {
     Write-Host "`n--- File Paths ---" -ForegroundColor Cyan
     $config['paths_temp_download'] = Read-UserInput -Prompt "Temp Download Path" -DefaultValue $platformDefaults['TempPath'] -Required
     $config['paths_external_archive'] = Read-UserInput -Prompt "External Archive Path (where originals will be stored)" -Required
-    $config['paths_log'] = Read-UserInput -Prompt "Log Path" -DefaultValue $platformDefaults['LogPath'] -Required
 
     # Compression Settings
     Write-Host "`n--- Compression Settings ---" -ForegroundColor Cyan
@@ -200,13 +198,11 @@ function Initialize-Configuration {
         $config['email_send_on_error'] = 'False'
     }
 
-    # Logging Settings
+    # Logging Settings (database-based)
     Write-Host "`n--- Logging Settings ---" -ForegroundColor Cyan
     $config['logging_log_level'] = Read-UserInput -Prompt "Log Level (Debug, Info, Warning, Error)" -DefaultValue "Info"
-    $config['logging_console_output'] = (Read-YesNo -Prompt "Enable console output?" -DefaultValue $true).ToString()
-    $config['logging_file_output'] = (Read-YesNo -Prompt "Enable file output?" -DefaultValue $true).ToString()
-    $config['logging_max_log_size_mb'] = Read-UserInput -Prompt "Max Log Size (MB)" -DefaultValue "100"
-    $config['logging_log_retention_days'] = Read-UserInput -Prompt "Log Retention (days)" -DefaultValue "30"
+    $config['logging_console_output'] = (Read-YesNo -Prompt "Enable console output?" -DefaultValue $false).ToString()
+    $config['logging_retention_days'] = Read-UserInput -Prompt "Log Retention (days)" -DefaultValue "30"
 
     # Advanced Settings
     Write-Host "`n--- Advanced Settings ---" -ForegroundColor Cyan
@@ -368,8 +364,8 @@ if ($Phase -in @('Catalog', 'Both')) {
         }
 
         # Store catalog run metadata
-        $null = Set-Metadata -Key 'last_catalog_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        $null = Set-Metadata -Key 'total_cataloged' -Value $stats.TotalCataloged.ToString()
+        $null = Set-SPVidCompMetadata -Key 'last_catalog_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        $null = Set-SPVidCompMetadata -Key 'total_cataloged' -Value $stats.TotalCataloged.ToString()
 
         Write-Host "`nPhase 1 Complete!`n" -ForegroundColor Green
     }
@@ -663,8 +659,8 @@ if ($Phase -in @('Process', 'Both')) {
         }
 
         # Store processing run metadata
-        $null = Set-Metadata -Key 'last_processing_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        $null = Set-Metadata -Key 'total_processed' -Value $processedCount.ToString()
+        $null = Set-SPVidCompMetadata -Key 'last_processing_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        $null = Set-SPVidCompMetadata -Key 'total_processed' -Value $processedCount.ToString()
     }
     catch {
         Write-SPVidCompLog -Message "Processing phase failed: $_" -Level 'Error'

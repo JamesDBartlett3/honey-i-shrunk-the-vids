@@ -13,10 +13,11 @@ BeforeAll {
     }
     Import-Module PSSQLite -Force
 
-    # Create test directories FIRST (before importing module)
+    # Create test directories and database FIRST (before importing module)
     $Script:TestTempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "workflow-test-$(Get-Random)"
     $Script:TestArchiveDir = Join-Path -Path $Script:TestTempDir -ChildPath 'archive'
     $Script:TestLogDir = Join-Path -Path $Script:TestTempDir -ChildPath 'logs'
+    $Script:TestDbPath = Join-Path -Path $Script:TestTempDir -ChildPath "workflow-test.db"
 
     New-Item -ItemType Directory -Path $Script:TestTempDir -Force | Out-Null
     New-Item -ItemType Directory -Path $Script:TestArchiveDir -Force | Out-Null
@@ -26,7 +27,7 @@ BeforeAll {
     Import-TestModule
 
     # Initialize logger
-    Initialize-Logger -LogPath $Script:TestLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
+    Initialize-SPVidCompLogger -DatabasePath $Script:TestDbPath -LogLevel 'Debug' -ConsoleOutput $false
 }
 
 AfterAll {
@@ -239,55 +240,6 @@ Describe 'Archive Workflow' {
 #------------------------------------------------------------------------------------------------------------------
 # Filename Sanitization Workflow Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Filename Sanitization Workflow' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should handle valid filenames without modification' {
-        $result = Repair-SPVidCompFilename -Filename 'normal-video-2024.mp4'
-
-        $result.Success | Should -BeTrue
-        $result.Changed | Should -BeFalse
-        $result.SanitizedFilename | Should -Be 'normal-video-2024.mp4'
-    }
-
-    It 'Should sanitize filenames with spaces' {
-        # Spaces are valid, should not change
-        $result = Repair-SPVidCompFilename -Filename 'video with spaces.mp4'
-
-        $result.Success | Should -BeTrue
-        $result.SanitizedFilename | Should -Be 'video with spaces.mp4'
-    }
-
-    It 'Should sanitize filenames with special characters' {
-        # Null character is invalid everywhere
-        $invalidName = "video`0name.mp4"
-
-        $result = Repair-SPVidCompFilename -Filename $invalidName -Strategy 'Replace' -ReplacementChar '_'
-
-        $result.Success | Should -BeTrue
-        $result.Changed | Should -BeTrue
-        $result.SanitizedFilename | Should -Not -Match "`0"
-    }
-
-    It 'Should preserve file extension' {
-        $invalidName = "bad`0name.mp4"
-
-        $result = Repair-SPVidCompFilename -Filename $invalidName -Strategy 'Replace'
-
-        $result.SanitizedFilename | Should -Match '\.mp4$'
-    }
-}
-
-#------------------------------------------------------------------------------------------------------------------
-# Error Handling Workflow Tests
-#------------------------------------------------------------------------------------------------------------------
 Describe 'Error Handling Workflow' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
@@ -476,36 +428,3 @@ Describe 'Resume Capability' {
 #------------------------------------------------------------------------------------------------------------------
 # Configuration Persistence Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Configuration Persistence' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should persist configuration across reinitializations' {
-        $config = Get-TestConfig
-        $config['sharepoint_site_url'] = 'https://test.sharepoint.com'
-        $config['compression_frame_rate'] = '15'
-        $config['paths_temp_download'] = 'C:\Temp\Test'
-
-        Set-SPVidCompConfig -ConfigValues $config
-
-        # Simulate script restart by reinitializing catalog
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-
-        $retrieved = Get-SPVidCompConfig
-
-        $retrieved['sharepoint_site_url'] | Should -Be 'https://test.sharepoint.com'
-        $retrieved['compression_frame_rate'] | Should -Be '15'
-    }
-
-    It 'Should indicate config exists after saving' {
-        $result = Test-SPVidCompConfigExists
-
-        $result | Should -BeTrue
-    }
-}

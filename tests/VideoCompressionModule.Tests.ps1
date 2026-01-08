@@ -20,7 +20,7 @@ BeforeAll {
     Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
 
     $Script:GlobalTestLogPath = New-TestLogDirectory
-    Initialize-Logger -LogPath $Script:GlobalTestLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
+    Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Error' -ConsoleOutput $false
 }
 
 AfterAll {
@@ -352,248 +352,10 @@ Describe 'Copy-SPVidCompArchive' {
 #------------------------------------------------------------------------------------------------------------------
 # Catalog and Database Integration Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Initialize-SPVidCompCatalog' {
-    BeforeEach {
-        $Script:TestDbPath = New-TestDatabase
-    }
-
-    AfterEach {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should create database file' {
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-
-        Test-Path -LiteralPath $Script:TestDbPath | Should -BeTrue
-    }
-
-    It 'Should not throw on valid path' {
-        { Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath } | Should -Not -Throw
-    }
-}
-
-Describe 'Add-SPVidCompVideo' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should add video to catalog' {
-        $video = Get-TestVideoRecord -Filename 'add-test.mp4'
-
-        $result = Add-SPVidCompVideo @video
-
-        $result | Should -BeTrue
-    }
-
-    It 'Should return true on successful add' {
-        $video = Get-TestVideoRecord -Filename "unique-$(Get-Random).mp4"
-
-        $result = Add-SPVidCompVideo @video
-
-        $result | Should -BeTrue
-    }
-}
-
-Describe 'Get-SPVidCompVideos' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-
-        # Add test videos
-        $video1 = Get-TestVideoRecord -Filename 'query-test-1.mp4'
-        $video2 = Get-TestVideoRecord -Filename 'query-test-2.mp4'
-        Add-SPVidCompVideo @video1
-        Add-SPVidCompVideo @video2
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should return videos from catalog' {
-        $videos = Get-SPVidCompVideos
-
-        $videos | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Should filter by status' {
-        $videos = Get-SPVidCompVideos -Status 'Cataloged'
-
-        $videos | ForEach-Object { $_.status | Should -Be 'Cataloged' }
-    }
-
-    It 'Should respect limit parameter' {
-        $videos = Get-SPVidCompVideos -Limit 1
-
-        $videos.Count | Should -BeLessOrEqual 1
-    }
-}
-
-Describe 'Update-SPVidCompStatus' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-
-        $video = Get-TestVideoRecord -Filename 'status-update-test.mp4'
-        Add-SPVidCompVideo @video
-
-        $Script:TestVideoId = (Get-SPVidCompVideos)[0].id
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should update video status' {
-        $result = Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Downloading'
-
-        $result | Should -BeTrue
-    }
-
-    It 'Should update with additional fields' {
-        $result = Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Completed' -AdditionalFields @{
-            compressed_size = 50000000
-            compression_ratio = 0.5
-        }
-
-        $result | Should -BeTrue
-    }
-}
-
-Describe 'Get-SPVidCompStatistics' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-
-        $video = Get-TestVideoRecord -Filename 'stats-test.mp4' -Size 100000000
-        Add-SPVidCompVideo @video
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should return statistics hashtable' {
-        $stats = Get-SPVidCompStatistics
-
-        $stats | Should -Not -BeNullOrEmpty
-    }
-
-    It 'Should include TotalCataloged' {
-        $stats = Get-SPVidCompStatistics
-
-        $stats.TotalCataloged | Should -BeGreaterOrEqual 1
-    }
-
-    It 'Should include TotalOriginalSize' {
-        $stats = Get-SPVidCompStatistics
-
-        $stats.TotalOriginalSize | Should -BeGreaterOrEqual 100000000
-    }
-}
-
-#------------------------------------------------------------------------------------------------------------------
-# Configuration Tests
-#------------------------------------------------------------------------------------------------------------------
-Describe 'Configuration Functions' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    Describe 'Test-SPVidCompConfigExists' {
-        It 'Should return false when no config exists' {
-            $freshDb = New-TestDatabase -Path (Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "fresh-config-$(Get-Random).db")
-            Initialize-SPVidCompCatalog -DatabasePath $freshDb
-
-            $result = Test-SPVidCompConfigExists
-
-            # May be true or false depending on state - just verify it doesn't throw
-            $result | Should -BeIn @($true, $false)
-
-            Remove-TestDatabase -Path $freshDb
-
-            # Restore the original test database path for subsequent tests
-            Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-        }
-    }
-
-    Describe 'Set-SPVidCompConfig and Get-SPVidCompConfig' {
-        BeforeAll {
-            # Ensure we're using the correct test database
-            Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
-        }
-
-        It 'Should store configuration values' {
-            $config = @{
-                'sharepoint_site_url' = 'https://test.sharepoint.com'
-                'sharepoint_library_name' = 'Documents'
-                'sharepoint_folder_path' = '/Videos'
-                'sharepoint_recursive' = 'True'
-                'paths_temp_download' = '/tmp/test'
-                'paths_external_archive' = '/tmp/archive'
-                'paths_log' = '/tmp/logs'
-                'compression_frame_rate' = '10'
-                'compression_video_codec' = 'libx265'
-                'compression_timeout_minutes' = '60'
-                'processing_retry_attempts' = '3'
-                'processing_required_disk_space_gb' = '50'
-                'processing_duration_tolerance_seconds' = '1'
-                'resume_enable' = 'True'
-                'resume_skip_processed' = 'True'
-                'resume_reprocess_failed' = 'True'
-                'email_enabled' = 'False'
-                'email_smtp_server' = 'smtp.test.com'
-                'email_smtp_port' = '587'
-                'email_use_ssl' = 'True'
-                'email_from' = 'test@test.com'
-                'email_to' = 'admin@test.com'
-                'email_send_on_completion' = 'True'
-                'email_send_on_error' = 'True'
-                'logging_log_level' = 'Info'
-                'logging_console_output' = 'False'
-                'logging_file_output' = 'True'
-                'logging_max_log_size_mb' = '100'
-                'logging_log_retention_days' = '30'
-                'advanced_cleanup_temp_files' = 'True'
-                'advanced_verify_checksums' = 'True'
-                'advanced_dry_run' = 'False'
-                'illegal_char_strategy' = 'Replace'
-                'illegal_char_replacement' = '_'
-            }
-
-            $result = Set-SPVidCompConfig -ConfigValues $config
-
-            $result | Should -BeTrue
-        }
-
-        It 'Should retrieve stored configuration' {
-            $retrieved = Get-SPVidCompConfig
-
-            $retrieved | Should -Not -BeNullOrEmpty
-            $retrieved['sharepoint_site_url'] | Should -Be 'https://test.sharepoint.com'
-            $retrieved['compression_frame_rate'] | Should -Be '10'
-            $retrieved['email_enabled'] | Should -Be 'False'
-        }
-    }
-}
-
-#------------------------------------------------------------------------------------------------------------------
-# Logging Wrapper Tests
-#------------------------------------------------------------------------------------------------------------------
 Describe 'Write-SPVidCompLog' {
     BeforeAll {
         $Script:TestLogPath = New-TestLogDirectory
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Debug' -ConsoleOutput $false
     }
 
     AfterAll {
@@ -692,7 +454,7 @@ Describe 'Install-SPVidCompFFmpeg' {
         # Initialize logger (suppress output)
         $Script:TestFFmpegLogDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-ffmpeg-logs-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:TestFFmpegLogDir -Force | Out-Null
-        Initialize-Logger -LogPath $Script:TestFFmpegLogDir -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Error' -ConsoleOutput $false
     }
 
     AfterAll {

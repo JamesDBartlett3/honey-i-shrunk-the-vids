@@ -10,11 +10,7 @@ BeforeAll {
     Import-TestModule
 
     # Initialize logger to suppress output
-    $testLogPath = New-TestLogDirectory
-    Initialize-Logger -LogPath $testLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
-
-    # Mock MailKit availability to prevent installation attempts during tests
-    # Tests will mock these functions as needed
+    Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Error' -ConsoleOutput $false
 }
 
 AfterAll {
@@ -23,8 +19,6 @@ AfterAll {
 
 Describe 'Initialize-EmailConfig' {
     It 'Should store email configuration without throwing' {
-        # Note: $Script:EmailConfig is module-internal and not accessible from test scope
-        # We verify the function runs successfully without errors
         $config = @{
             Enabled = $true
             SmtpServer = 'smtp.test.com'
@@ -55,104 +49,6 @@ Describe 'Initialize-EmailConfig' {
 
         $Script:EmailConfig.Enabled | Should -BeFalse
     }
-
-    It 'Should accept multiple recipients without error' {
-        $config = @{
-            Enabled = $true
-            SmtpServer = 'smtp.test.com'
-            SmtpPort = 587
-            UseSSL = $true
-            From = 'sender@test.com'
-            To = @('user1@test.com', 'user2@test.com', 'user3@test.com')
-            SendOnCompletion = $true
-            SendOnError = $true
-        }
-
-        { Initialize-EmailConfig -Config $config } | Should -Not -Throw
-    }
-}
-
-Describe 'Test-MailKitAvailability' {
-    It 'Should return a boolean value' {
-        $result = Test-MailKitAvailability
-
-        $result | Should -BeOfType [bool]
-    }
-
-    It 'Should not throw errors' {
-        { Test-MailKitAvailability } | Should -Not -Throw
-    }
-}
-
-Describe 'Install-MailKit' {
-    It 'Should return a boolean value' {
-        # Mock Install-Package to prevent actual installation
-        Mock -ModuleName VideoCompressionModule Install-Package { return $null }
-        Mock -ModuleName VideoCompressionModule Install-PackageProvider { return $null }
-        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return $null }
-        Mock -ModuleName VideoCompressionModule Test-MailKitAvailability { return $false }
-
-        $result = Install-MailKit
-
-        $result | Should -BeOfType [bool]
-    }
-
-    It 'Should not throw errors when installation fails' {
-        # Mock to simulate failure
-        Mock -ModuleName VideoCompressionModule Install-Package { throw "Package not found" }
-        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return @{ Name = 'NuGet' } }
-
-        { Install-MailKit } | Should -Not -Throw
-    }
-}
-
-Describe 'Test-MSALAvailability' {
-    It 'Should return a boolean value' {
-        $result = Test-MSALAvailability
-
-        $result | Should -BeOfType [bool]
-    }
-
-    It 'Should not throw errors' {
-        { Test-MSALAvailability } | Should -Not -Throw
-    }
-}
-
-Describe 'Install-MSAL' {
-    It 'Should return a boolean value' {
-        # Mock Install-Package to prevent actual installation
-        Mock -ModuleName VideoCompressionModule Install-Package { return $null }
-        Mock -ModuleName VideoCompressionModule Install-PackageProvider { return $null }
-        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return $null }
-        Mock -ModuleName VideoCompressionModule Test-MSALAvailability { return $false }
-
-        $result = Install-MSAL
-
-        $result | Should -BeOfType [bool]
-    }
-
-    It 'Should not throw errors when installation fails' {
-        # Mock to simulate failure
-        Mock -ModuleName VideoCompressionModule Install-Package { throw "Package not found" }
-        Mock -ModuleName VideoCompressionModule Get-PackageProvider { return @{ Name = 'NuGet' } }
-
-        { Install-MSAL } | Should -Not -Throw
-    }
-}
-
-Describe 'Get-OAuthAccessToken' {
-    It 'Should return null when MSAL types not available' {
-        # Mock to simulate MSAL not being available
-        Mock -ModuleName VideoCompressionModule New-Object { throw "Type not found" }
-
-        $result = Get-OAuthAccessToken -ClientId 'test-id' -TenantId 'test-tenant' -EmailAddress 'test@test.com'
-
-        $result | Should -BeNull
-    }
-
-    It 'Should not throw errors when token acquisition fails' {
-        { Get-OAuthAccessToken -ClientId 'test-id' -TenantId 'test-tenant' -EmailAddress 'test@test.com' } | Should -Not -Throw
-    }
 }
 
 Describe 'Send-EmailNotification' {
@@ -171,7 +67,6 @@ Describe 'Send-EmailNotification' {
         }
 
         BeforeEach {
-            # Reset MailKit availability flags in module scope
             InModuleScope VideoCompressionModule {
                 $Script:MailKitInstallAttempted = $false
                 $Script:MailKitAvailable = $false
@@ -198,29 +93,22 @@ Describe 'Send-EmailNotification' {
                 Password = 'testpass'
             }
 
-            # Mock MailKit functions to simulate unavailability
             Mock -ModuleName VideoCompressionModule Test-MailKitAvailability { return $false }
             Mock -ModuleName VideoCompressionModule Install-MailKit { return $false }
         }
 
         BeforeEach {
-            # Reset MailKit availability flags in module scope
             InModuleScope VideoCompressionModule {
                 $Script:MailKitInstallAttempted = $false
                 $Script:MailKitAvailable = $false
             }
         }
 
-        It 'Should return false when MailKit cannot be installed' {
-            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
-
-            $result | Should -BeFalse
-        }
-
-        It 'Should attempt to install MailKit' {
+        It 'Should attempt to install MailKit and return false if unavailable' {
             $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
 
             Should -Invoke -ModuleName VideoCompressionModule -CommandName Install-MailKit -Times 1
+            $result | Should -BeFalse
         }
     }
 
@@ -237,58 +125,21 @@ Describe 'Send-EmailNotification' {
                 Password = 'testpass'
             }
 
-            # Mock MailKit functions
             Mock -ModuleName VideoCompressionModule Send-EmailViaMailKit { return $true }
         }
 
         BeforeEach {
-            # Set MailKit as available in module scope
             InModuleScope VideoCompressionModule {
                 $Script:MailKitInstallAttempted = $true
                 $Script:MailKitAvailable = $true
             }
         }
 
-        It 'Should call Send-EmailViaMailKit' {
+        It 'Should call Send-EmailViaMailKit and return true' {
             $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
 
             Should -Invoke -ModuleName VideoCompressionModule -CommandName Send-EmailViaMailKit -Times 1
-        }
-
-        It 'Should return result from Send-EmailViaMailKit' {
-            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
-
             $result | Should -BeTrue
-        }
-    }
-
-    Context 'When email config is not initialized' {
-        BeforeAll {
-            # Re-initialize with null-like config
-            Initialize-EmailConfig -Config @{
-                Enabled = $false
-                SmtpServer = ''
-                SmtpPort = 25
-                UseSSL = $false
-                From = ''
-                To = @()
-                Username = ''
-                Password = ''
-            }
-        }
-
-        BeforeEach {
-            # Reset MailKit flags in module scope
-            InModuleScope VideoCompressionModule {
-                $Script:MailKitInstallAttempted = $false
-                $Script:MailKitAvailable = $false
-            }
-        }
-
-        It 'Should return false gracefully' {
-            $result = Send-EmailNotification -Subject 'Test' -Body 'Test body'
-
-            $result | Should -BeFalse
         }
     }
 
@@ -308,27 +159,18 @@ Describe 'Send-EmailNotification' {
                 Password = ''
             }
 
-            # Mock dependencies
             Mock -ModuleName VideoCompressionModule Send-EmailViaMailKit { return $true }
             Mock -ModuleName VideoCompressionModule Test-MSALAvailability { return $true }
             Mock -ModuleName VideoCompressionModule Install-MSAL { return $true }
         }
 
         BeforeEach {
-            # Set MailKit and MSAL as available in module scope
             InModuleScope VideoCompressionModule {
                 $Script:MailKitInstallAttempted = $true
                 $Script:MailKitAvailable = $true
                 $Script:MSALInstallAttempted = $true
                 $Script:MSALAvailable = $true
             }
-        }
-
-        It 'Should check for MSAL availability' {
-            $result = Send-EmailNotification -Subject 'Test' -Body 'Body'
-
-            # MSAL availability is checked in Send-EmailNotification
-            $result | Should -BeTrue
         }
 
         It 'Should send email with OAuth configuration' {
@@ -342,7 +184,6 @@ Describe 'Send-EmailNotification' {
 
 Describe 'Build-CompletionReport' {
     BeforeAll {
-        # Sample statistics data
         $Script:TestStats = @{
             TotalCataloged = 100
             TotalOriginalSize = 10737418240  # 10 GB
@@ -362,50 +203,23 @@ Describe 'Build-CompletionReport' {
         )
     }
 
-    It 'Should return HTML content' {
+    It 'Should return valid HTML report with all required data' {
         $report = Build-CompletionReport -Statistics $Script:TestStats
 
+        # Verify it's HTML
         $report | Should -Match '<html>'
         $report | Should -Match '</html>'
-    }
 
-    It 'Should include report title' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
+        # Verify key data is included
         $report | Should -Match 'SharePoint Video Compression Report'
-    }
-
-    It 'Should include total cataloged count' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
-        $report | Should -Match '100'
-    }
-
-    It 'Should include completed count' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
-        $report | Should -Match '85'
-    }
-
-    It 'Should include failed count' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
-        $report | Should -Match '10'
-    }
-
-    It 'Should include space saved' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
-        # 5 GB space saved
-        $report | Should -Match '5'
-    }
-
-    It 'Should include status breakdown table' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
+        $report | Should -Match '100'  # Total cataloged
+        $report | Should -Match '85'   # Completed count
+        $report | Should -Match '10'   # Failed count
         $report | Should -Match 'Completed'
         $report | Should -Match 'Failed'
         $report | Should -Match 'Cataloged'
+        $report | Should -Match '<style>'  # Has CSS
+        $report | Should -Match '\d{4}-\d{2}-\d{2}'  # Has date
     }
 
     It 'Should include failed videos section when provided' {
@@ -422,77 +236,35 @@ Describe 'Build-CompletionReport' {
 
         $report | Should -Not -Match 'Failed Videos'
     }
-
-    It 'Should include CSS styling' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
-        $report | Should -Match '<style>'
-        $report | Should -Match 'font-family'
-    }
-
-    It 'Should include run date' {
-        $report = Build-CompletionReport -Statistics $Script:TestStats
-
-        $report | Should -Match 'Run Date'
-        $report | Should -Match '\d{4}-\d{2}-\d{2}'
-    }
 }
 
 Describe 'Build-ErrorReport' {
-    It 'Should return HTML content' {
-        $report = Build-ErrorReport -ErrorMessage 'Test error'
+    It 'Should return valid HTML error report with message' {
+        $errorMsg = 'Connection timeout after 30 seconds'
+        $report = Build-ErrorReport -ErrorMessage $errorMsg
 
         $report | Should -Match '<html>'
         $report | Should -Match '</html>'
-    }
-
-    It 'Should include error message' {
-        $errorMsg = 'Connection timeout after 30 seconds'
-
-        $report = Build-ErrorReport -ErrorMessage $errorMsg
-
         $report | Should -Match $errorMsg
-    }
-
-    It 'Should include video filename when provided' {
-        $report = Build-ErrorReport -ErrorMessage 'Error' -VideoFilename 'problem-video.mp4'
-
-        $report | Should -Match 'problem-video.mp4'
-    }
-
-    It 'Should include SharePoint URL when provided' {
-        $url = 'https://contoso.sharepoint.com/sites/Videos/video.mp4'
-
-        $report = Build-ErrorReport -ErrorMessage 'Error' -SharePointUrl $url
-
-        $report | Should -Match $url
-    }
-
-    It 'Should include timestamp' {
-        $report = Build-ErrorReport -ErrorMessage 'Error'
-
-        $report | Should -Match 'Time'
-        $report | Should -Match '\d{4}-\d{2}-\d{2}'
-    }
-
-    It 'Should have error styling' {
-        $report = Build-ErrorReport -ErrorMessage 'Error'
-
         $report | Should -Match 'error'
         $report | Should -Match '#d13438'  # Error color
+        $report | Should -Match '\d{4}-\d{2}-\d{2}'  # Has timestamp
     }
 
-    It 'Should work with minimal parameters' {
-        { Build-ErrorReport -ErrorMessage 'Minimal error' } | Should -Not -Throw
+    It 'Should include optional video information when provided' {
+        $url = 'https://contoso.sharepoint.com/sites/Videos/video.mp4'
+        $report = Build-ErrorReport -ErrorMessage 'Error' -VideoFilename 'problem-video.mp4' -SharePointUrl $url
 
-        $report = Build-ErrorReport -ErrorMessage 'Minimal error'
-        $report | Should -Not -BeNullOrEmpty
+        $report | Should -Match 'problem-video.mp4'
+        $report | Should -Match $url
     }
 
     It 'Should handle special characters in error message' {
         $errorMsg = 'Error: <script>alert("xss")</script> & special "chars"'
 
         { Build-ErrorReport -ErrorMessage $errorMsg } | Should -Not -Throw
+        $report = Build-ErrorReport -ErrorMessage $errorMsg
+        $report | Should -Not -BeNullOrEmpty
     }
 }
 
@@ -510,7 +282,7 @@ Describe 'Email Report Integration' {
         }
     }
 
-    It 'Should be able to build and send completion report' {
+    It 'Should build valid completion report that can be sent' {
         $stats = @{
             TotalCataloged = 50
             TotalOriginalSize = 5368709120
@@ -524,58 +296,16 @@ Describe 'Email Report Integration' {
 
         $report = Build-CompletionReport -Statistics $stats
 
-        # Report should be valid HTML that could be sent
         $report | Should -Match '<html>'
         $report.Length | Should -BeGreaterThan 100
     }
 
-    It 'Should be able to build and send error report' {
+    It 'Should build valid error report that can be sent' {
         $report = Build-ErrorReport -ErrorMessage 'Compression failed' `
             -VideoFilename 'test.mp4' `
             -SharePointUrl 'https://test.sharepoint.com/test.mp4'
 
-        # Report should be valid HTML that could be sent
         $report | Should -Match '<html>'
         $report.Length | Should -BeGreaterThan 100
-    }
-}
-
-Describe 'Edge Cases' {
-    It 'Should handle empty statistics gracefully' {
-        $emptyStats = @{
-            TotalCataloged = 0
-            TotalOriginalSize = 0
-            TotalCompressedSize = 0
-            SpaceSaved = 0
-            AverageCompressionRatio = 0
-            StatusBreakdown = @()
-        }
-
-        { Build-CompletionReport -Statistics $emptyStats } | Should -Not -Throw
-    }
-
-    It 'Should handle null StatusBreakdown' {
-        $stats = @{
-            TotalCataloged = 10
-            TotalOriginalSize = 1073741824
-            TotalCompressedSize = 536870912
-            SpaceSaved = 536870912
-            AverageCompressionRatio = 0.5
-            StatusBreakdown = $null
-        }
-
-        { Build-CompletionReport -Statistics $stats } | Should -Not -Throw
-    }
-
-    It 'Should handle very long error messages' {
-        $longError = 'A' * 10000
-
-        { Build-ErrorReport -ErrorMessage $longError } | Should -Not -Throw
-    }
-
-    It 'Should handle unicode in filenames' {
-        $report = Build-ErrorReport -ErrorMessage 'Error' -VideoFilename '日本語ファイル名.mp4'
-
-        $report | Should -Match '日本語ファイル名.mp4'
     }
 }

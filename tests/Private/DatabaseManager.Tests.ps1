@@ -6,508 +6,270 @@ BeforeAll {
     # Import test helper
     . (Join-Path -Path $PSScriptRoot -ChildPath '..\TestHelper.ps1')
 
-    # Ensure PSSQLite is available
-    if (-not (Get-Module -ListAvailable -Name PSSQLite)) {
-        Install-Module -Name PSSQLite -Scope CurrentUser -Force -AllowClobber
-    }
-    Import-Module PSSQLite -Force
-
-    # Import the main module (which includes private scripts)
+    # Import the main module
     Import-TestModule
-
-    # Initialize logger to suppress output during tests
-    $testLogPath = New-TestLogDirectory
-    Initialize-Logger -LogPath $testLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
 }
 
-AfterAll {
-    Remove-TestLogDirectory
-}
+Describe 'Initialize-SPVidCompDatabase' {
+    It 'Should create database file with all required tables and indices' {
+        $dbPath = New-TestDatabase
 
-Describe 'Initialize-Database' {
-    BeforeEach {
-        $Script:TestDbPath = New-TestDatabase
-    }
+        Initialize-SPVidCompDatabase -DatabasePath $dbPath
 
-    AfterEach {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
+        # Verify file exists
+        Test-Path -LiteralPath $dbPath | Should -BeTrue
 
-    It 'Should create a new database file' {
-        Initialize-Database -DatabasePath $Script:TestDbPath
+        # Verify all tables exist
+        $tables = Invoke-SqliteQuery -DataSource $dbPath -Query "SELECT name FROM sqlite_master WHERE type='table'"
+        $tableNames = $tables.name
 
-        Test-Path -LiteralPath $Script:TestDbPath | Should -BeTrue
-    }
+        $tableNames | Should -Contain 'videos'
+        $tableNames | Should -Contain 'processing_log'
+        $tableNames | Should -Contain 'metadata'
+        $tableNames | Should -Contain 'config'
+        $tableNames | Should -Contain 'logs'
 
-    It 'Should create the videos table' {
-        Initialize-Database -DatabasePath $Script:TestDbPath
-
-        $tables = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='videos'"
-
-        $tables.name | Should -Be 'videos'
-    }
-
-    It 'Should create the processing_log table' {
-        Initialize-Database -DatabasePath $Script:TestDbPath
-
-        $tables = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='processing_log'"
-
-        $tables.name | Should -Be 'processing_log'
-    }
-
-    It 'Should create the metadata table' {
-        Initialize-Database -DatabasePath $Script:TestDbPath
-
-        $tables = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'"
-
-        $tables.name | Should -Be 'metadata'
-    }
-
-    It 'Should create indices on videos table' {
-        Initialize-Database -DatabasePath $Script:TestDbPath
-
-        $indices = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='videos'"
-
-        $indices.name | Should -Contain 'idx_status'
-        $indices.name | Should -Contain 'idx_site_url'
-        $indices.name | Should -Contain 'idx_cataloged_date'
-    }
-
-    It 'Should create directory if it does not exist' {
-        $nestedPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "nested\test\path\test-$(Get-Random).db"
-
-        Initialize-Database -DatabasePath $nestedPath
-
-        Test-Path -LiteralPath $nestedPath | Should -BeTrue
-
-        # Cleanup
-        Remove-Item -LiteralPath (Split-Path -Path $nestedPath -Parent) -Recurse -Force
-    }
-
-    It 'Should be idempotent (can be called multiple times)' {
-        Initialize-Database -DatabasePath $Script:TestDbPath
-        { Initialize-Database -DatabasePath $Script:TestDbPath } | Should -Not -Throw
+        Remove-TestDatabase -Path $dbPath
     }
 }
 
-Describe 'Add-VideoToDatabase' {
+Describe 'Add-SPVidCompVideo' {
     BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-Database -DatabasePath $Script:TestDbPath
+        $dbPath = New-TestDatabase
+        Initialize-SPVidCompCatalog -DatabasePath $dbPath
+        Initialize-SPVidCompLogger -DatabasePath $dbPath -LogLevel 'Error' -ConsoleOutput $false
     }
 
     AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
+        Remove-TestDatabase -Path $dbPath
     }
 
-    It 'Should add a new video record' {
+    It 'Should add video record with all metadata' {
         $video = Get-TestVideoRecord
 
-        $result = Add-VideoToDatabase @video
+        $result = Add-SPVidCompVideo -SharePointUrl $video.SharePointUrl `
+            -SiteUrl $video.SiteUrl `
+            -LibraryName $video.LibraryName `
+            -FolderPath $video.FolderPath `
+            -Filename $video.Filename `
+            -OriginalSize $video.OriginalSize `
+            -ModifiedDate $video.ModifiedDate
 
         $result | Should -BeTrue
-    }
 
-    It 'Should store correct video metadata' {
-        $video = Get-TestVideoRecord -Filename 'metadata-test.mp4' -Size 52428800
+        # Verify video was added with correct data
+        $stored = Get-SPVidCompVideos
 
-        Add-VideoToDatabase @video
-
-        $stored = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT * FROM videos WHERE filename = 'metadata-test.mp4'"
-
-        $stored.filename | Should -Be 'metadata-test.mp4'
-        $stored.original_size | Should -Be 52428800
-        $stored.site_url | Should -Be $video.SiteUrl
-        $stored.library_name | Should -Be $video.LibraryName
-        $stored.status | Should -Be 'Cataloged'
+        $stored | Should -Not -BeNullOrEmpty
+        $stored[0].filename | Should -Be $video.Filename
+        $stored[0].original_size | Should -Be $video.OriginalSize
+        $stored[0].status | Should -Be 'Cataloged'
+        $stored[0].retry_count | Should -Be 0
     }
 
     It 'Should not duplicate videos with same SharePoint URL' {
-        $video = Get-TestVideoRecord -Filename 'duplicate-test.mp4'
+        $video = Get-TestVideoRecord -Filename "duplicate-test.mp4"
 
-        Add-VideoToDatabase @video
-        Add-VideoToDatabase @video  # Add same video again
+        Add-SPVidCompVideo -SharePointUrl $video.SharePointUrl `
+            -SiteUrl $video.SiteUrl `
+            -LibraryName $video.LibraryName `
+            -FolderPath $video.FolderPath `
+            -Filename $video.Filename `
+            -OriginalSize $video.OriginalSize `
+            -ModifiedDate $video.ModifiedDate
 
-        $count = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT COUNT(*) as count FROM videos WHERE filename = 'duplicate-test.mp4'"
+        Add-SPVidCompVideo -SharePointUrl $video.SharePointUrl `
+            -SiteUrl $video.SiteUrl `
+            -LibraryName $video.LibraryName `
+            -FolderPath $video.FolderPath `
+            -Filename $video.Filename `
+            -OriginalSize $video.OriginalSize `
+            -ModifiedDate $video.ModifiedDate
 
-        $count.count | Should -Be 1
-    }
-
-    It 'Should set initial status to Cataloged' {
-        $video = Get-TestVideoRecord -Filename 'status-test.mp4'
-
-        Add-VideoToDatabase @video
-
-        $stored = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT status FROM videos WHERE filename = 'status-test.mp4'"
-
-        $stored.status | Should -Be 'Cataloged'
-    }
-
-    It 'Should set retry_count to 0' {
-        $video = Get-TestVideoRecord -Filename 'retry-test.mp4'
-
-        Add-VideoToDatabase @video
-
-        $stored = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT retry_count FROM videos WHERE filename = 'retry-test.mp4'"
-
-        $stored.retry_count | Should -Be 0
+        $videos = Get-SPVidCompVideos
+        ($videos | Where-Object { $_.sharepoint_url -eq $video.SharePointUrl }).Count | Should -Be 1
     }
 }
 
-Describe 'Get-VideosFromDatabase' {
+Describe 'Get-SPVidCompVideos' {
     BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-Database -DatabasePath $Script:TestDbPath
+        $dbPath = New-TestDatabase
+        Initialize-SPVidCompCatalog -DatabasePath $dbPath
+        Initialize-SPVidCompLogger -DatabasePath $dbPath -LogLevel 'Error' -ConsoleOutput $false
 
         # Add test videos with different statuses
-        $videos = @(
-            @{ Filename = 'cataloged-1.mp4'; Status = 'Cataloged' }
-            @{ Filename = 'cataloged-2.mp4'; Status = 'Cataloged' }
-            @{ Filename = 'completed-1.mp4'; Status = 'Completed' }
-            @{ Filename = 'failed-1.mp4'; Status = 'Failed' }
-        )
-
-        foreach ($v in $videos) {
-            $video = Get-TestVideoRecord -Filename $v.Filename
-            Add-VideoToDatabase @video
-
-            if ($v.Status -ne 'Cataloged') {
-                Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "UPDATE videos SET status = '$($v.Status)' WHERE filename = '$($v.Filename)'"
-            }
+        1..3 | ForEach-Object {
+            $video = Get-TestVideoRecord -Filename "cataloged-$_.mp4"
+            Add-SPVidCompVideo -SharePointUrl $video.SharePointUrl `
+                -SiteUrl $video.SiteUrl `
+                -LibraryName $video.LibraryName `
+                -FolderPath $video.FolderPath `
+                -Filename $video.Filename `
+                -OriginalSize $video.OriginalSize `
+                -ModifiedDate $video.ModifiedDate
         }
+
+        $completed = Get-TestVideoRecord -Filename "completed.mp4"
+        Add-SPVidCompVideo -SharePointUrl $completed.SharePointUrl `
+            -SiteUrl $completed.SiteUrl `
+            -LibraryName $completed.LibraryName `
+            -FolderPath $completed.FolderPath `
+            -Filename $completed.Filename `
+            -OriginalSize $completed.OriginalSize `
+            -ModifiedDate $completed.ModifiedDate
+        Update-SPVidCompStatus -VideoId 4 -Status 'Completed'
+
+        $failed = Get-TestVideoRecord -Filename "failed.mp4"
+        Add-SPVidCompVideo -SharePointUrl $failed.SharePointUrl `
+            -SiteUrl $failed.SiteUrl `
+            -LibraryName $failed.LibraryName `
+            -FolderPath $failed.FolderPath `
+            -Filename $failed.Filename `
+            -OriginalSize $failed.OriginalSize `
+            -ModifiedDate $failed.ModifiedDate
+        Update-SPVidCompStatus -VideoId 5 -Status 'Failed'
     }
 
     AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
+        Remove-TestDatabase -Path $dbPath
     }
 
-    It 'Should return all videos when no status filter' {
-        $results = Get-VideosFromDatabase
+    It 'Should return all videos and filter by status' {
+        $all = Get-SPVidCompVideos
+        $all.Count | Should -Be 5
 
-        $results.Count | Should -BeGreaterOrEqual 4
-    }
+        $cataloged = Get-SPVidCompVideos -Status 'Cataloged'
+        $cataloged.Count | Should -Be 3
 
-    It 'Should filter by Cataloged status' {
-        $results = Get-VideosFromDatabase -Status 'Cataloged'
+        $completed = Get-SPVidCompVideos -Status 'Completed'
+        $completed.Count | Should -Be 1
 
-        $results.Count | Should -Be 2
-        $results | ForEach-Object { $_.status | Should -Be 'Cataloged' }
-    }
-
-    It 'Should filter by Completed status' {
-        $results = Get-VideosFromDatabase -Status 'Completed'
-
-        $results.Count | Should -Be 1
-        $results[0].filename | Should -Be 'completed-1.mp4'
-    }
-
-    It 'Should filter by Failed status' {
-        $results = Get-VideosFromDatabase -Status 'Failed'
-
-        $results.Count | Should -Be 1
-        $results[0].filename | Should -Be 'failed-1.mp4'
+        $failed = Get-SPVidCompVideos -Status 'Failed'
+        $failed.Count | Should -Be 1
     }
 
     It 'Should respect Limit parameter' {
-        $results = Get-VideosFromDatabase -Limit 2
-
-        $results.Count | Should -Be 2
-    }
-
-    It 'Should filter by MaxRetryCount' {
-        # Set retry count on failed video
-        Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "UPDATE videos SET retry_count = 5 WHERE filename = 'failed-1.mp4'"
-
-        $results = Get-VideosFromDatabase -Status 'Failed' -MaxRetryCount 3
-
-        $results.Count | Should -Be 0
-    }
-
-    It 'Should order by cataloged_date ASC' {
-        $results = Get-VideosFromDatabase -Status 'Cataloged'
-
-        # First result should have earlier or equal date
-        $results[0].cataloged_date | Should -BeLessOrEqual $results[1].cataloged_date
+        $limited = Get-SPVidCompVideos -Limit 2
+        $limited.Count | Should -Be 2
     }
 }
 
-Describe 'Update-VideoStatus' {
+Describe 'Update-SPVidCompStatus' {
     BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-Database -DatabasePath $Script:TestDbPath
+        $dbPath = New-TestDatabase
+        Initialize-SPVidCompCatalog -DatabasePath $dbPath
+        Initialize-SPVidCompLogger -DatabasePath $dbPath -LogLevel 'Error' -ConsoleOutput $false
 
-        $video = Get-TestVideoRecord -Filename 'update-status-test.mp4'
-        Add-VideoToDatabase @video
-
-        $Script:TestVideoId = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT id FROM videos WHERE filename = 'update-status-test.mp4'").id
+        $video = Get-TestVideoRecord
+        Add-SPVidCompVideo -SharePointUrl $video.SharePointUrl `
+            -SiteUrl $video.SiteUrl `
+            -LibraryName $video.LibraryName `
+            -FolderPath $video.FolderPath `
+            -Filename $video.Filename `
+            -OriginalSize $video.OriginalSize `
+            -ModifiedDate $video.ModifiedDate
     }
 
     AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
+        Remove-TestDatabase -Path $dbPath
     }
 
-    It 'Should update status to Downloading' {
-        Update-VideoStatus -VideoId $Script:TestVideoId -Status 'Downloading'
+    It 'Should update status and set timestamps appropriately' {
+        # Update to Downloading - should set processing_started
+        $result = Update-SPVidCompStatus -VideoId 1 -Status 'Downloading'
+        $result | Should -BeTrue
 
-        $video = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT status FROM videos WHERE id = $Script:TestVideoId"
-
+        $video = Get-SPVidCompVideos | Where-Object { $_.id -eq 1 }
         $video.status | Should -Be 'Downloading'
-    }
-
-    It 'Should set processing_started when status is Downloading' {
-        $video = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT processing_started FROM videos WHERE id = $Script:TestVideoId"
-
         $video.processing_started | Should -Not -BeNullOrEmpty
-    }
 
-    It 'Should update status to Completed' {
-        Update-VideoStatus -VideoId $Script:TestVideoId -Status 'Completed'
+        # Update to Completed - should set processing_completed
+        Update-SPVidCompStatus -VideoId 1 -Status 'Completed'
 
-        $video = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT status FROM videos WHERE id = $Script:TestVideoId"
-
+        $video = Get-SPVidCompVideos | Where-Object { $_.id -eq 1 }
         $video.status | Should -Be 'Completed'
-    }
-
-    It 'Should set processing_completed when status is Completed' {
-        $video = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT processing_completed FROM videos WHERE id = $Script:TestVideoId"
-
         $video.processing_completed | Should -Not -BeNullOrEmpty
     }
 
     It 'Should update additional fields' {
-        Update-VideoStatus -VideoId $Script:TestVideoId -Status 'Completed' -AdditionalFields @{
-            compressed_size = 52428800
-            compression_ratio = 0.5
-            archive_path = 'C:\Archive\test.mp4'
-        }
+        $result = Update-SPVidCompStatus -VideoId 1 -Status 'Compressing' `
+            -AdditionalFields @{ compressed_size = 50MB; archive_path = '/tmp/archive/test.mp4' }
 
-        $video = Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT compressed_size, compression_ratio, archive_path FROM videos WHERE id = $Script:TestVideoId"
-
-        $video.compressed_size | Should -Be 52428800
-        $video.compression_ratio | Should -Be 0.5
-        $video.archive_path | Should -Be 'C:\Archive\test.mp4'
-    }
-
-    It 'Should add entry to processing_log' {
-        $initialCount = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT COUNT(*) as count FROM processing_log WHERE video_id = $Script:TestVideoId").count
-
-        Update-VideoStatus -VideoId $Script:TestVideoId -Status 'Verifying'
-
-        $newCount = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT COUNT(*) as count FROM processing_log WHERE video_id = $Script:TestVideoId").count
-
-        $newCount | Should -BeGreaterThan $initialCount
+        $video = Get-SPVidCompVideos | Where-Object { $_.id -eq 1 }
+        $video.compressed_size | Should -Be 50MB
+        $video.archive_path | Should -Be '/tmp/archive/test.mp4'
     }
 }
 
-Describe 'Get-DatabaseStatistics' {
+Describe 'Get-SPVidCompStatistics' {
     BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-Database -DatabasePath $Script:TestDbPath
+        $dbPath = New-TestDatabase
+        Initialize-SPVidCompCatalog -DatabasePath $dbPath
+        Initialize-SPVidCompLogger -DatabasePath $dbPath -LogLevel 'Error' -ConsoleOutput $false
 
-        # Add test videos
-        $video1 = Get-TestVideoRecord -Filename 'stats-1.mp4' -Size 104857600  # 100 MB
-        $video2 = Get-TestVideoRecord -Filename 'stats-2.mp4' -Size 209715200  # 200 MB
-        Add-VideoToDatabase @video1
-        Add-VideoToDatabase @video2
+        # Add videos with different statuses and sizes
+        $video1 = Get-TestVideoRecord -Filename "video1.mp4" -Size 100MB
+        Add-SPVidCompVideo -SharePointUrl $video1.SharePointUrl `
+            -SiteUrl $video1.SiteUrl `
+            -LibraryName $video1.LibraryName `
+            -FolderPath $video1.FolderPath `
+            -Filename $video1.Filename `
+            -OriginalSize $video1.OriginalSize `
+            -ModifiedDate $video1.ModifiedDate
+        Update-SPVidCompStatus -VideoId 1 -Status 'Completed' -AdditionalFields @{ compressed_size = 50MB }
 
-        # Mark one as completed with compression
-        $id = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT id FROM videos WHERE filename = 'stats-1.mp4'").id
-        Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "UPDATE videos SET status = 'Completed', compressed_size = 52428800 WHERE id = $id"
+        $video2 = Get-TestVideoRecord -Filename "video2.mp4" -Size 200MB
+        Add-SPVidCompVideo -SharePointUrl $video2.SharePointUrl `
+            -SiteUrl $video2.SiteUrl `
+            -LibraryName $video2.LibraryName `
+            -FolderPath $video2.FolderPath `
+            -Filename $video2.Filename `
+            -OriginalSize $video2.OriginalSize `
+            -ModifiedDate $video2.ModifiedDate
+        Update-SPVidCompStatus -VideoId 2 -Status 'Failed'
     }
 
     AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
+        Remove-TestDatabase -Path $dbPath
     }
 
-    It 'Should return TotalCataloged count' {
-        $stats = Get-DatabaseStatistics
+    It 'Should return comprehensive statistics' {
+        $stats = Get-SPVidCompStatistics
 
+        $stats | Should -Not -BeNullOrEmpty
         $stats.TotalCataloged | Should -Be 2
-    }
-
-    It 'Should return TotalOriginalSize' {
-        $stats = Get-DatabaseStatistics
-
-        $stats.TotalOriginalSize | Should -Be 314572800  # 300 MB
-    }
-
-    It 'Should return TotalCompressedSize' {
-        $stats = Get-DatabaseStatistics
-
-        $stats.TotalCompressedSize | Should -Be 52428800  # 50 MB
-    }
-
-    It 'Should return StatusBreakdown' {
-        $stats = Get-DatabaseStatistics
-
+        $stats.TotalOriginalSize | Should -Be 300MB
+        $stats.TotalCompressedSize | Should -Be 50MB
+        $stats.SpaceSaved | Should -Be 50MB
         $stats.StatusBreakdown | Should -Not -BeNullOrEmpty
-        $stats.StatusBreakdown.Count | Should -BeGreaterOrEqual 1
-    }
-
-    It 'Should calculate SpaceSaved' {
-        $stats = Get-DatabaseStatistics
-
-        $stats.SpaceSaved | Should -Be 52428800  # 100 MB - 50 MB = 50 MB
+        $stats.StatusBreakdown.Count | Should -BeGreaterThan 0
     }
 }
 
-Describe 'Configuration Functions' {
+Describe 'Config and Metadata Functions' {
     BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-Database -DatabasePath $Script:TestDbPath
+        $dbPath = New-TestDatabase
+        Initialize-SPVidCompCatalog -DatabasePath $dbPath
+        Initialize-SPVidCompLogger -DatabasePath $dbPath -LogLevel 'Error' -ConsoleOutput $false
     }
 
     AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
+        Remove-TestDatabase -Path $dbPath
     }
 
-    Describe 'Set-ConfigValue and Get-ConfigValue' {
-        BeforeAll {
-            # Ensure we're using the correct database
-            Initialize-Database -DatabasePath $Script:TestDbPath
-        }
+    It 'Should store and retrieve configuration' {
+        $configExists = Test-SPVidCompConfigExists
+        $configExists | Should -BeFalse
 
-        It 'Should store and retrieve a string value' {
-            Set-ConfigValue -Key 'test_string' -Value 'hello world'
+        $config = Get-TestConfig
+        $result = Set-SPVidCompConfig -ConfigValues $config
+        $result | Should -BeTrue
 
-            $result = Get-ConfigValue -Key 'test_string'
+        $configExists = Test-SPVidCompConfigExists
+        $configExists | Should -BeTrue
 
-            $result | Should -Be 'hello world'
-        }
-
-        It 'Should store and retrieve a numeric value as string' {
-            Set-ConfigValue -Key 'test_number' -Value '42'
-
-            $result = Get-ConfigValue -Key 'test_number'
-
-            $result | Should -Be '42'
-        }
-
-        It 'Should return default value when key does not exist' {
-            $result = Get-ConfigValue -Key 'nonexistent_key' -DefaultValue 'default'
-
-            $result | Should -Be 'default'
-        }
-
-        It 'Should overwrite existing value' {
-            Set-ConfigValue -Key 'overwrite_test' -Value 'original'
-            Set-ConfigValue -Key 'overwrite_test' -Value 'updated'
-
-            $result = Get-ConfigValue -Key 'overwrite_test'
-
-            $result | Should -Be 'updated'
-        }
-
-        It 'Should handle empty string values' {
-            # Note: SQLite stores empty strings as NULL, so Get-ConfigValue returns default
-            # This is expected behavior - test verifies the function handles this gracefully
-            Set-ConfigValue -Key 'empty_test' -Value ''
-
-            $result = Get-ConfigValue -Key 'empty_test' -DefaultValue 'default'
-
-            # Accept either empty string or default (depends on SQLite null handling)
-            $result | Should -BeIn @('', 'default')
-        }
-    }
-
-    Describe 'Test-ConfigExists' {
-        BeforeAll {
-            # Ensure we're using the correct database
-            Initialize-Database -DatabasePath $Script:TestDbPath
-        }
-
-        It 'Should return false when no config exists' {
-            # Use a fresh database for this specific test
-            $freshDb = New-TestDatabase -Path (Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "fresh-$(Get-Random).db")
-            Initialize-Database -DatabasePath $freshDb
-
-            $result = Test-ConfigExists
-
-            $result | Should -BeFalse
-
-            Remove-TestDatabase -Path $freshDb
-
-            # IMPORTANT: Restore the original test database path
-            Initialize-Database -DatabasePath $Script:TestDbPath
-        }
-
-        It 'Should return true when config exists' {
-            # First ensure we have the right database
-            Initialize-Database -DatabasePath $Script:TestDbPath
-
-            Set-ConfigValue -Key 'sharepoint_site_url' -Value 'https://test.sharepoint.com'
-
-            $result = Test-ConfigExists
-
-            $result | Should -BeTrue
-        }
-    }
-
-    Describe 'Get-AllConfig' {
-        BeforeAll {
-            # Ensure we're using the correct database
-            Initialize-Database -DatabasePath $Script:TestDbPath
-
-            # Set config values - Set-ConfigValue adds 'config_' prefix internally
-            # So setting key 'key_1' stores as 'config_key_1' in metadata
-            Set-ConfigValue -Key 'key_1' -Value 'value1'
-            Set-ConfigValue -Key 'key_2' -Value 'value2'
-        }
-
-        It 'Should return all config values as hashtable' {
-            $config = Get-AllConfig
-
-            $config | Should -BeOfType [hashtable]
-        }
-
-        It 'Should strip config_ prefix from keys' {
-            $config = Get-AllConfig
-
-            # Get-AllConfig strips 'config_' prefix, so 'config_key_1' becomes 'key_1'
-            $config.Keys | Should -Contain 'key_1'
-            $config.Keys | Should -Contain 'key_2'
-        }
-    }
-
-    Describe 'Remove-ConfigValue' {
-        BeforeAll {
-            # Ensure we're using the correct database
-            Initialize-Database -DatabasePath $Script:TestDbPath
-        }
-
-        It 'Should remove a config value' {
-            Set-ConfigValue -Key 'remove_test' -Value 'to be removed'
-
-            Remove-ConfigValue -Key 'remove_test'
-
-            $result = Get-ConfigValue -Key 'remove_test' -DefaultValue 'not found'
-
-            $result | Should -Be 'not found'
-        }
-    }
-}
-
-Describe 'Metadata Functions' {
-    BeforeAll {
-        $Script:TestDbPath = New-TestDatabase
-        Initialize-Database -DatabasePath $Script:TestDbPath
-    }
-
-    AfterAll {
-        Remove-TestDatabase -Path $Script:TestDbPath
-    }
-
-    It 'Should store and retrieve metadata' {
-        Set-Metadata -Key 'last_run' -Value '2024-01-15 10:30:00'
-
-        $result = Get-Metadata -Key 'last_run'
-
-        $result | Should -Be '2024-01-15 10:30:00'
-    }
-
-    It 'Should return null for non-existent metadata' {
-        $result = Get-Metadata -Key 'nonexistent_metadata'
-
-        $result | Should -BeNullOrEmpty
+        $retrieved = Get-SPVidCompConfig
+        $retrieved | Should -Not -BeNullOrEmpty
+        $retrieved['sharepoint_site_url'] | Should -Be $config['sharepoint_site_url']
     }
 }

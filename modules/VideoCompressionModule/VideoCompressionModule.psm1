@@ -310,8 +310,7 @@ function Initialize-SPVidCompConfig {
         $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
 
         # Load configuration from database
-        $configHash = Get-AllConfig
-
+        $configHash = Get-SPVidCompAllConfig 
         if ($configHash.Count -eq 0) {
             throw "No configuration found in database. Please run with -Setup parameter first."
         }
@@ -327,7 +326,6 @@ function Initialize-SPVidCompConfig {
             Paths = [PSCustomObject]@{
                 TempDownloadPath = $configHash['paths_temp_download']
                 ExternalArchivePath = $configHash['paths_external_archive']
-                LogPath = $configHash['paths_log']
                 DatabasePath = $DatabasePath
             }
             Compression = [PSCustomObject]@{
@@ -358,9 +356,7 @@ function Initialize-SPVidCompConfig {
             Logging = [PSCustomObject]@{
                 LogLevel = $configHash['logging_log_level']
                 ConsoleOutput = [bool]::Parse($configHash['logging_console_output'])
-                FileOutput = [bool]::Parse($configHash['logging_file_output'])
-                MaxLogSizeMB = [int]$configHash['logging_max_log_size_mb']
-                LogRetentionDays = [int]$configHash['logging_log_retention_days']
+                RetentionDays = [int]$configHash['logging_retention_days']
             }
             Advanced = [PSCustomObject]@{
                 CleanupTempFiles = [bool]::Parse($configHash['advanced_cleanup_temp_files'])
@@ -374,12 +370,10 @@ function Initialize-SPVidCompConfig {
         }
 
         # Initialize logger
-        Initialize-Logger -LogPath $Script:Config.Paths.LogPath `
+        Initialize-SPVidCompLogger -DatabasePath $Script:Config.Paths.DatabasePath `
             -LogLevel $Script:Config.Logging.LogLevel `
             -ConsoleOutput $Script:Config.Logging.ConsoleOutput `
-            -FileOutput $Script:Config.Logging.FileOutput `
-            -MaxLogSizeMB $Script:Config.Logging.MaxLogSizeMB `
-            -LogRetentionDays $Script:Config.Logging.LogRetentionDays
+            -LogRetentionDays $Script:Config.Logging.RetentionDays
 
         Write-SPVidCompLog -Message "Configuration loaded successfully from database" -Level 'Info'
 
@@ -483,7 +477,7 @@ function Initialize-SPVidCompCatalog {
     )
 
     try {
-        Initialize-Database -DatabasePath $DatabasePath
+        Initialize-SPVidCompDatabase -DatabasePath $DatabasePath
         Write-SPVidCompLog -Message "Video catalog initialized" -Level 'Info'
     }
     catch {
@@ -522,7 +516,7 @@ function Add-SPVidCompVideo {
     )
 
     try {
-        $result = Add-VideoToDatabase -SharePointUrl $SharePointUrl -SiteUrl $SiteUrl `
+        $result = Add-SPVidCompVideoToDatabase -SharePointUrl $SharePointUrl -SiteUrl $SiteUrl `
             -LibraryName $LibraryName -FolderPath $FolderPath -Filename $Filename `
             -OriginalSize $OriginalSize -ModifiedDate $ModifiedDate
 
@@ -556,7 +550,7 @@ function Get-SPVidCompVideos {
     )
 
     try {
-        return Get-VideosFromDatabase -Status $Status -MaxRetryCount $MaxRetryCount -Limit $Limit
+        return Get-SPVidCompVideosFromDatabase -Status $Status -MaxRetryCount $MaxRetryCount -Limit $Limit
     }
     catch {
         Write-SPVidCompLog -Message "Failed to query videos: $_" -Level 'Error'
@@ -582,7 +576,7 @@ function Update-SPVidCompStatus {
     )
 
     try {
-        return Update-VideoStatus -VideoId $VideoId -Status $Status -AdditionalFields $AdditionalFields
+        return Update-SPVidCompVideoStatus -VideoId $VideoId -Status $Status -AdditionalFields $AdditionalFields
     }
     catch {
         Write-SPVidCompLog -Message "Failed to update video status: $_" -Level 'Error'
@@ -1167,7 +1161,7 @@ function Write-SPVidCompLog {
         [string]$Component = ''
     )
 
-    Write-LogEntry -Message $Message -Level $Level -Component $Component
+    Write-SPVidCompLogEntry -Message $Message -Level $Level -Component $Component
 }
 
 #------------------------------------------------------------------------------------------------------------------
@@ -1276,8 +1270,7 @@ function Get-SPVidCompStatistics {
     param()
 
     try {
-        return Get-DatabaseStatistics
-    }
+        return Get-SPVidCompDatabaseStatistics     }
     catch {
         Write-SPVidCompLog -Message "Failed to retrieve statistics: $_" -Level 'Error'
         return $null
@@ -1487,22 +1480,6 @@ function Repair-SPVidCompFilename {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidCompConfigExists
-# Purpose: Check if configuration exists in database
-#------------------------------------------------------------------------------------------------------------------
-function Test-SPVidCompConfigExists {
-    [CmdletBinding()]
-    param()
-
-    try {
-        return Test-ConfigExists
-    }
-    catch {
-        return $false
-    }
-}
-
-#------------------------------------------------------------------------------------------------------------------
 # Function: Get-SPVidCompConfig
 # Purpose: Retrieve current configuration from database
 #------------------------------------------------------------------------------------------------------------------
@@ -1511,8 +1488,7 @@ function Get-SPVidCompConfig {
     param()
 
     try {
-        return Get-AllConfig
-    }
+        return Get-SPVidCompAllConfig     }
     catch {
         Write-SPVidCompLog -Message "Failed to retrieve configuration: $_" -Level 'Error'
         return @{}
@@ -1620,7 +1596,7 @@ function Set-SPVidCompConfig {
     )
 
     try {
-        $result = Set-Config -ConfigValues $ConfigValues
+        $result = Set-SPVidCompAllConfig -ConfigValues $ConfigValues
         if ($result) {
             Write-SPVidCompLog -Message "Configuration saved successfully" -Level 'Info'
         }

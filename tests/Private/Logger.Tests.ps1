@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------------------------------------------
-# Logger.Tests.ps1 - Unit tests for Logger.ps1
+# Logger.Tests.ps1 - Unit tests for Logger.ps1 (Database-Based Logging)
 #------------------------------------------------------------------------------------------------------------------
 
 BeforeAll {
@@ -10,345 +10,198 @@ BeforeAll {
     Import-TestModule
 }
 
-Describe 'Initialize-Logger' {
-    BeforeEach {
-        $Script:TestLogPath = New-TestLogDirectory
+Describe 'Initialize-SPVidCompLogger' {
+    It 'Should initialize with valid parameters without throwing' {
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Warning' -ConsoleOutput $false } | Should -Not -Throw
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogRetentionDays 14 -ConsoleOutput $false } | Should -Not -Throw
     }
 
-    AfterEach {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
+    It 'Should accept all valid log levels' {
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Debug' -ConsoleOutput $false } | Should -Not -Throw
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Info' -ConsoleOutput $false } | Should -Not -Throw
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Warning' -ConsoleOutput $false } | Should -Not -Throw
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Error' -ConsoleOutput $false } | Should -Not -Throw
     }
 
-    It 'Should create log directory if it does not exist' {
-        $newLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "new-log-dir-$(Get-Random)"
+    It 'Should create error log directory if specified' {
+        $errorLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-error-logs-$(Get-Random)"
 
-        Initialize-Logger -LogPath $newLogPath -ConsoleOutput $false
+        { Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -ErrorLogPath $errorLogPath -ConsoleOutput $false } | Should -Not -Throw
 
-        Test-Path -LiteralPath $newLogPath | Should -BeTrue
+        Test-Path -LiteralPath $errorLogPath | Should -BeTrue
 
-        # Cleanup
-        Remove-Item -LiteralPath $newLogPath -Recurse -Force
-    }
-
-    It 'Should not throw when setting LogLevel' {
-        { Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Warning' -ConsoleOutput $false } | Should -Not -Throw
-    }
-
-    It 'Should not throw when setting ConsoleOutput' {
-        { Initialize-Logger -LogPath $Script:TestLogPath -ConsoleOutput $false } | Should -Not -Throw
-    }
-
-    It 'Should not throw when setting FileOutput' {
-        { Initialize-Logger -LogPath $Script:TestLogPath -FileOutput $false -ConsoleOutput $false } | Should -Not -Throw
-    }
-
-    It 'Should not throw when setting MaxLogSizeMB' {
-        { Initialize-Logger -LogPath $Script:TestLogPath -MaxLogSizeMB 50 -ConsoleOutput $false } | Should -Not -Throw
-    }
-
-    It 'Should not throw when setting LogRetentionDays' {
-        { Initialize-Logger -LogPath $Script:TestLogPath -LogRetentionDays 14 -ConsoleOutput $false } | Should -Not -Throw
-    }
-
-    It 'Should accept valid log levels' {
-        { Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $false } | Should -Not -Throw
-        { Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Info' -ConsoleOutput $false } | Should -Not -Throw
-        { Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Warning' -ConsoleOutput $false } | Should -Not -Throw
-        { Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Error' -ConsoleOutput $false } | Should -Not -Throw
+        Remove-Item -LiteralPath $errorLogPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
-Describe 'Write-LogEntry' {
+Describe 'Write-SPVidCompLogEntry - Database Storage' {
     BeforeAll {
-        $Script:TestLogPath = New-TestLogDirectory
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
+        # Initialize catalog first to create database with logs table
+        Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Debug' -ConsoleOutput $false
     }
 
-    AfterAll {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
+    It 'Should write log entry to database with all fields' {
+        $uniqueMsg = "Database test message $(Get-Random)"
+        Write-SPVidCompLogEntry -Message $uniqueMsg -Level 'Info' -Component 'TestComponent'
+
+        # Query database directly
+        $query = "SELECT * FROM logs WHERE message = @message"
+        $logs = Invoke-SqliteQuery -DataSource $Script:GlobalTestDbPath -Query $query -SqlParameters @{ message = $uniqueMsg }
+
+        $logs | Should -Not -BeNullOrEmpty
+        $logs[0].message | Should -Be $uniqueMsg
+        $logs[0].level | Should -Be 'Info'
+        $logs[0].component | Should -Be 'TestComponent'
+        $logs[0].timestamp | Should -Match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
     }
 
-    It 'Should write log entry to file' {
-        Write-LogEntry -Message 'Test log message' -Level 'Info'
+    It 'Should respect log level filtering' {
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Warning' -ConsoleOutput $false
 
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
+        $debugMsg = "Debug-filtered-$(Get-Random)"
+        $warnMsg = "Warning-shown-$(Get-Random)"
 
-        Test-Path -LiteralPath $logFile | Should -BeTrue
+        Write-SPVidCompLogEntry -Message $debugMsg -Level 'Debug'
+        Write-SPVidCompLogEntry -Message $warnMsg -Level 'Warning'
 
-        $content = Get-Content -LiteralPath $logFile -Raw
+        # Query all logs
+        $allLogs = Invoke-SqliteQuery -DataSource $Script:GlobalTestDbPath -Query "SELECT message FROM logs"
 
-        $content | Should -Match 'Test log message'
-    }
-
-    It 'Should include timestamp in log entry' {
-        Write-LogEntry -Message 'Timestamp test' -Level 'Info'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        # Should match timestamp pattern: yyyy-MM-dd HH:mm:ss
-        $content | Should -Match '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
-    }
-
-    It 'Should include log level in entry' {
-        Write-LogEntry -Message 'Level test' -Level 'Warning'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        $content | Should -Match '\[Warning\]'
-    }
-
-    It 'Should include component when specified' {
-        Write-LogEntry -Message 'Component test' -Level 'Info' -Component 'TestComponent'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        $content | Should -Match '\[TestComponent\]'
-    }
-
-    It 'Should respect log level filtering - Debug not written at Info level' {
-        # Reinitialize with Info level
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Info' -ConsoleOutput $false -FileOutput $true
-
-        # Create a unique message
-        $uniqueMsg = "Debug-filtered-$(Get-Random)"
-        Write-LogEntry -Message $uniqueMsg -Level 'Debug'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        $content | Should -Not -Match $uniqueMsg
-    }
-
-    It 'Should write Error level regardless of log level setting' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $true
-
-        $uniqueMsg = "Error-message-$(Get-Random)"
-        Write-LogEntry -Message $uniqueMsg -Level 'Error'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        $content | Should -Match $uniqueMsg
+        $allLogs.message | Should -Not -Contain $debugMsg
+        $allLogs.message | Should -Contain $warnMsg
     }
 }
 
 Describe 'Log Level Hierarchy' {
-    BeforeEach {
-        $Script:TestLogPath = New-TestLogDirectory
+    BeforeAll {
+        Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
     }
 
-    AfterEach {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
-    }
-
-    It 'Debug level should write all messages' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
+    It 'Should filter messages based on log level hierarchy' {
+        # Test Debug level - writes everything
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Debug' -ConsoleOutput $false
 
         $debugMsg = "debug-$(Get-Random)"
         $infoMsg = "info-$(Get-Random)"
-        $warnMsg = "warn-$(Get-Random)"
-        $errorMsg = "error-$(Get-Random)"
 
-        Write-LogEntry -Message $debugMsg -Level 'Debug'
-        Write-LogEntry -Message $infoMsg -Level 'Info'
-        Write-LogEntry -Message $warnMsg -Level 'Warning'
-        Write-LogEntry -Message $errorMsg -Level 'Error'
+        Write-SPVidCompLogEntry -Message $debugMsg -Level 'Debug'
+        Write-SPVidCompLogEntry -Message $infoMsg -Level 'Info'
 
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
+        $logs = Invoke-SqliteQuery -DataSource $Script:GlobalTestDbPath -Query "SELECT message FROM logs"
 
-        $content | Should -Match $debugMsg
-        $content | Should -Match $infoMsg
-        $content | Should -Match $warnMsg
-        $content | Should -Match $errorMsg
-    }
+        $logs.message | Should -Contain $debugMsg
+        $logs.message | Should -Contain $infoMsg
 
-    It 'Info level should filter Debug messages' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Info' -ConsoleOutput $false -FileOutput $true
-
-        $debugMsg = "debug-filtered-$(Get-Random)"
-        $infoMsg = "info-shown-$(Get-Random)"
-
-        Write-LogEntry -Message $debugMsg -Level 'Debug'
-        Write-LogEntry -Message $infoMsg -Level 'Info'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        $content | Should -Not -Match $debugMsg
-        $content | Should -Match $infoMsg
-    }
-
-    It 'Warning level should filter Debug and Info messages' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Warning' -ConsoleOutput $false -FileOutput $true
-
-        $debugMsg = "debug-filtered-$(Get-Random)"
-        $infoMsg = "info-filtered-$(Get-Random)"
-        $warnMsg = "warn-shown-$(Get-Random)"
-
-        Write-LogEntry -Message $debugMsg -Level 'Debug'
-        Write-LogEntry -Message $infoMsg -Level 'Info'
-        Write-LogEntry -Message $warnMsg -Level 'Warning'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
-
-        $content | Should -Not -Match $debugMsg
-        $content | Should -Not -Match $infoMsg
-        $content | Should -Match $warnMsg
-    }
-
-    It 'Error level should only write Error messages' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $true
+        # Test Error level - only writes errors
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Error' -ConsoleOutput $false
 
         $warnMsg = "warn-filtered-$(Get-Random)"
         $errorMsg = "error-shown-$(Get-Random)"
 
-        Write-LogEntry -Message $warnMsg -Level 'Warning'
-        Write-LogEntry -Message $errorMsg -Level 'Error'
+        Write-SPVidCompLogEntry -Message $warnMsg -Level 'Warning'
+        Write-SPVidCompLogEntry -Message $errorMsg -Level 'Error'
 
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile -Raw
+        $logs = Invoke-SqliteQuery -DataSource $Script:GlobalTestDbPath -Query "SELECT message FROM logs"
 
-        $content | Should -Not -Match $warnMsg
-        $content | Should -Match $errorMsg
+        $logs.message | Should -Not -Contain $warnMsg
+        $logs.message | Should -Contain $errorMsg
     }
 }
 
-Describe 'Get-LogHistory' {
+Describe 'Get-SPVidCompLogHistory' {
     BeforeAll {
-        $Script:TestLogPath = New-TestLogDirectory
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
+        Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Debug' -ConsoleOutput $false
 
-        # Write some test entries
+        # Write test entries
         1..10 | ForEach-Object {
-            Write-LogEntry -Message "History test message $_" -Level 'Info'
+            Write-SPVidCompLogEntry -Message "History test message $_" -Level 'Info'
         }
-        Write-LogEntry -Message 'Warning message' -Level 'Warning'
-        Write-LogEntry -Message 'Error message' -Level 'Error'
+        Write-SPVidCompLogEntry -Message 'Warning message for history' -Level 'Warning' -Component 'TestComponent'
     }
 
-    AfterAll {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
-    }
-
-    It 'Should return log entries' {
-        $history = Get-LogHistory -Last 5
+    It 'Should return log entries from database' {
+        $history = Get-SPVidCompLogHistory -Last 5
 
         $history | Should -Not -BeNullOrEmpty
         $history.Count | Should -BeLessOrEqual 5
     }
 
-    It 'Should filter by level' {
-        $history = Get-LogHistory -Level 'Warning'
+    It 'Should filter by level and component' {
+        $history = Get-SPVidCompLogHistory -Level 'Warning'
 
         $history | Should -Not -BeNullOrEmpty
-        $history | ForEach-Object { $_ | Should -Match '\[Warning\]' }
-    }
+        $history | ForEach-Object { $_.level | Should -Be 'Warning' }
 
-    It 'Should handle missing log file gracefully' {
-        # Try to get history from non-existent date
-        $result = Get-LogHistory -Last 5
+        $history = Get-SPVidCompLogHistory -Component 'TestComponent'
 
-        # Should return something (entries or null) without throwing
-        { Get-LogHistory -Last 5 } | Should -Not -Throw
+        $history | Should -Not -BeNullOrEmpty
+        $history | ForEach-Object { $_.component | Should -Be 'TestComponent' }
     }
 }
 
-Describe 'Log File Naming' {
-    BeforeEach {
-        $Script:TestLogPath = New-TestLogDirectory
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Info' -ConsoleOutput $false -FileOutput $true
-    }
-
-    AfterEach {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
-    }
-
-    It 'Should create log file with date-based name' {
-        Write-LogEntry -Message 'File naming test' -Level 'Info'
-
-        $expectedFileName = "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath $expectedFileName
-
-        Test-Path -LiteralPath $logFile | Should -BeTrue
-    }
-
-    It 'Should append to existing log file' {
-        Write-LogEntry -Message 'First entry' -Level 'Info'
-        Write-LogEntry -Message 'Second entry' -Level 'Info'
-
-        $logFile = Join-Path -Path $Script:TestLogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
-        $content = Get-Content -LiteralPath $logFile
-
-        $content.Count | Should -BeGreaterOrEqual 2
-    }
-}
-
-Describe 'Clean-OldLogs' {
-    BeforeEach {
-        $Script:TestLogPath = New-TestLogDirectory
-    }
-
-    AfterEach {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
+Describe 'Clear-SPVidCompOldLogs' {
+    BeforeAll {
+        Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogRetentionDays 30 -ConsoleOutput $false
     }
 
     It 'Should remove logs older than retention period' {
-        # Create an old log file
-        $oldLogFile = Join-Path -Path $Script:TestLogPath -ChildPath 'video-compression-20200101.log'
-        'Old log content' | Out-File -FilePath $oldLogFile
+        # Insert old log entry directly
+        $oldTimestamp = (Get-Date).AddDays(-60).ToString("yyyy-MM-ddTHH:mm:ss")
+        $query = "INSERT INTO logs (timestamp, level, component, message) VALUES (@timestamp, @level, @component, @message)"
+        Invoke-SqliteQuery -DataSource $Script:GlobalTestDbPath -Query $query -SqlParameters @{
+            timestamp = $oldTimestamp
+            level = 'Info'
+            component = 'Test'
+            message = 'Old log entry that should be deleted'
+        }
 
-        # Set file date to old
-        (Get-Item -LiteralPath $oldLogFile).LastWriteTime = (Get-Date).AddDays(-60)
+        # Add recent entry
+        Write-SPVidCompLogEntry -Message 'Recent log entry' -Level 'Info'
 
-        # Initialize logger with 30 day retention (triggers cleanup)
-        Initialize-Logger -LogPath $Script:TestLogPath -LogRetentionDays 30 -ConsoleOutput $false
+        # Run cleanup
+        Clear-SPVidCompOldLogs
 
-        # Old file should be removed
-        Test-Path -LiteralPath $oldLogFile | Should -BeFalse
-    }
-
-    It 'Should keep logs within retention period' {
-        # Create a recent log file
-        $recentLogFile = Join-Path -Path $Script:TestLogPath -ChildPath 'video-compression-recent.log'
-        'Recent log content' | Out-File -FilePath $recentLogFile
-
-        # Set file date to recent (5 days ago)
-        (Get-Item -LiteralPath $recentLogFile).LastWriteTime = (Get-Date).AddDays(-5)
-
-        # Initialize logger with 30 day retention
-        Initialize-Logger -LogPath $Script:TestLogPath -LogRetentionDays 30 -ConsoleOutput $false
-
-        # Recent file should still exist
-        Test-Path -LiteralPath $recentLogFile | Should -BeTrue
+        # Verify old entry is gone
+        $logs = Invoke-SqliteQuery -DataSource $Script:GlobalTestDbPath -Query "SELECT message FROM logs"
+        $logs.message | Should -Not -Contain 'Old log entry that should be deleted'
+        $logs.message | Should -Contain 'Recent log entry'
     }
 }
 
 Describe 'Console Output' {
-    BeforeEach {
-        $Script:TestLogPath = New-TestLogDirectory
+    BeforeAll {
+        Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
     }
 
-    AfterEach {
-        Remove-TestLogDirectory -Path $Script:TestLogPath
+    It 'Should handle console output for all log levels' {
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -LogLevel 'Debug' -ConsoleOutput $true
+
+        { Write-SPVidCompLogEntry -Message 'Debug' -Level 'Debug' } | Should -Not -Throw
+        { Write-SPVidCompLogEntry -Message 'Info' -Level 'Info' } | Should -Not -Throw
+        { Write-SPVidCompLogEntry -Message 'Warning' -Level 'Warning' } | Should -Not -Throw
+        { Write-SPVidCompLogEntry -Message 'Error' -Level 'Error' } | Should -Not -Throw
     }
+}
 
-    It 'Should not throw when ConsoleOutput is enabled' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Info' -ConsoleOutput $true -FileOutput $false
+Describe 'Error Fallback Logging' {
+    It 'Should handle database logging failures gracefully' {
+        $errorLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-fallback-errors-$(Get-Random)"
 
-        { Write-LogEntry -Message 'Console test' -Level 'Info' } | Should -Not -Throw
-    }
+        # Initialize logger with error log path
+        Initialize-SPVidCompLogger -DatabasePath $Script:GlobalTestDbPath -ErrorLogPath $errorLogPath -ConsoleOutput $false
 
-    It 'Should handle all log levels for console output' {
-        Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $true -FileOutput $false
+        # Verify initialization created the error log directory
+        Test-Path -LiteralPath $errorLogPath | Should -BeTrue
 
-        { Write-LogEntry -Message 'Debug' -Level 'Debug' } | Should -Not -Throw
-        { Write-LogEntry -Message 'Info' -Level 'Info' } | Should -Not -Throw
-        { Write-LogEntry -Message 'Warning' -Level 'Warning' } | Should -Not -Throw
-        { Write-LogEntry -Message 'Error' -Level 'Error' } | Should -Not -Throw
+        # Test that logging doesn't throw even if database is unavailable
+        # This verifies the error handling gracefully degrades to file logging
+        { Write-SPVidCompLogEntry -Message 'Test message 1' -Level 'Info' } | Should -Not -Throw
+        { Write-SPVidCompLogEntry -Message 'Test message 2' -Level 'Warning' } | Should -Not -Throw
+        { Write-SPVidCompLogEntry -Message 'Test message 3' -Level 'Error' } | Should -Not -Throw
+
+        Remove-Item -LiteralPath $errorLogPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

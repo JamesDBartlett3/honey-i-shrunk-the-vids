@@ -6,10 +6,9 @@
 $Script:DatabasePath = $null
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Initialize-Database
-# Purpose: Create or open SQLite database and initialize schema
+# Function: Initialize-SPVidCompDatabase # Purpose: Create or open SQLite database and initialize schema
 #------------------------------------------------------------------------------------------------------------------
-function Initialize-Database {
+function Initialize-SPVidCompDatabase {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -27,9 +26,9 @@ function Initialize-Database {
 
         # Check if PSSQLite module is available
         if (-not (Get-Module -ListAvailable -Name PSSQLite)) {
-            Write-LogEntry -Message "PSSQLite module not found. Installing..." -Level 'Warning'
+            Write-SPVidCompLogEntry -Message "PSSQLite module not found. Installing..." -Level 'Warning'
             Install-Module -Name PSSQLite -Scope CurrentUser -Force -AllowClobber
-            Write-LogEntry -Message "PSSQLite module installed successfully" -Level 'Info'
+            Write-SPVidCompLogEntry -Message "PSSQLite module installed successfully" -Level 'Info'
         }
 
         # Import module
@@ -38,11 +37,11 @@ function Initialize-Database {
         # Create database schema
         Create-DatabaseSchema
 
-        Write-LogEntry -Message "Database initialized successfully: $DatabasePath" -Level 'Info'
+        Write-SPVidCompLogEntry -Message "Database initialized successfully: $DatabasePath" -Level 'Info'
         return $true
     }
     catch {
-        Write-LogEntry -Message "Failed to initialize database: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to initialize database: $_" -Level 'Error'
         throw
     }
 }
@@ -124,7 +123,6 @@ CREATE TABLE IF NOT EXISTS config (
     -- Path settings
     paths_temp_download TEXT NOT NULL,
     paths_external_archive TEXT NOT NULL,
-    paths_log TEXT NOT NULL,
     -- Compression settings
     compression_frame_rate INTEGER NOT NULL DEFAULT 10,
     compression_video_codec TEXT NOT NULL DEFAULT 'libx265',
@@ -149,9 +147,7 @@ CREATE TABLE IF NOT EXISTS config (
     -- Logging settings
     logging_log_level TEXT NOT NULL DEFAULT 'Info',
     logging_console_output INTEGER NOT NULL DEFAULT 0,
-    logging_file_output INTEGER NOT NULL DEFAULT 1,
-    logging_max_log_size_mb INTEGER NOT NULL DEFAULT 100,
-    logging_log_retention_days INTEGER NOT NULL DEFAULT 30,
+    logging_retention_days INTEGER NOT NULL DEFAULT 30,
     -- Advanced settings
     advanced_cleanup_temp_files INTEGER NOT NULL DEFAULT 1,
     advanced_verify_checksums INTEGER NOT NULL DEFAULT 1,
@@ -174,19 +170,36 @@ CREATE TABLE IF NOT EXISTS metadata (
 
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $metadataQuery
 
-        Write-LogEntry -Message "Database schema created successfully" -Level 'Debug'
+        # Create logs table (for application-wide logging)
+        $logsQuery = @"
+CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    level TEXT NOT NULL,
+    component TEXT,
+    message TEXT NOT NULL,
+    context TEXT
+);
+"@
+
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $logsQuery
+
+        # Create index on logs table for performance
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);"
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query "CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);"
+
+        Write-SPVidCompLogEntry -Message "Database schema created successfully" -Level 'Debug'
     }
     catch {
-        Write-LogEntry -Message "Failed to create database schema: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to create database schema: $_" -Level 'Error'
         throw
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Add-VideoToDatabase
-# Purpose: Insert a new video into the catalog
+# Function: Add-SPVidCompVideoToDatabase # Purpose: Insert a new video into the catalog
 #------------------------------------------------------------------------------------------------------------------
-function Add-VideoToDatabase {
+function Add-SPVidCompVideoToDatabase {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -235,16 +248,15 @@ VALUES
         return $true
     }
     catch {
-        Write-LogEntry -Message "Failed to add video to database: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to add video to database: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-VideosFromDatabase
-# Purpose: Query videos by status or other criteria
+# Function: Get-SPVidCompVideosFromDatabase # Purpose: Query videos by status or other criteria
 #------------------------------------------------------------------------------------------------------------------
-function Get-VideosFromDatabase {
+function Get-SPVidCompVideosFromDatabase {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
@@ -282,16 +294,15 @@ function Get-VideosFromDatabase {
         return $results
     }
     catch {
-        Write-LogEntry -Message "Failed to query videos from database: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to query videos from database: $_" -Level 'Error'
         return $null
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Update-VideoStatus
-# Purpose: Update video status and related fields
+# Function: Update-SPVidCompVideoStatus # Purpose: Update video status and related fields
 #------------------------------------------------------------------------------------------------------------------
-function Update-VideoStatus {
+function Update-SPVidCompVideoStatus {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -334,21 +345,20 @@ function Update-VideoStatus {
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
 
         # Log status change
-        Add-ProcessingLogEntry -VideoId $VideoId -Status $Status -Message "Status updated to $Status"
+        Add-SPVidCompProcessingLogEntry -VideoId $VideoId -Status $Status -Message "Status updated to $Status"
 
         return $true
     }
     catch {
-        Write-LogEntry -Message "Failed to update video status: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to update video status: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Add-ProcessingLogEntry
-# Purpose: Add entry to processing log for audit trail
+# Function: Add-SPVidCompProcessingLogEntry # Purpose: Add entry to processing log for audit trail
 #------------------------------------------------------------------------------------------------------------------
-function Add-ProcessingLogEntry {
+function Add-SPVidCompProcessingLogEntry {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -377,15 +387,14 @@ VALUES (@video_id, @timestamp, @status, @message);
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
     }
     catch {
-        Write-LogEntry -Message "Failed to add processing log entry: $_" -Level 'Warning'
+        Write-SPVidCompLogEntry -Message "Failed to add processing log entry: $_" -Level 'Warning'
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-DatabaseStatistics
-# Purpose: Retrieve statistics from database
+# Function: Get-SPVidCompDatabaseStatistics # Purpose: Retrieve statistics from database
 #------------------------------------------------------------------------------------------------------------------
-function Get-DatabaseStatistics {
+function Get-SPVidCompDatabaseStatistics {
     [CmdletBinding()]
     param()
 
@@ -425,16 +434,15 @@ function Get-DatabaseStatistics {
         return $stats
     }
     catch {
-        Write-LogEntry -Message "Failed to retrieve database statistics: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to retrieve database statistics: $_" -Level 'Error'
         return $null
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Set-Metadata
-# Purpose: Store metadata key-value pairs
+# Function: Set-SPVidCompMetadata # Purpose: Store metadata key-value pairs
 #------------------------------------------------------------------------------------------------------------------
-function Set-Metadata {
+function Set-SPVidCompMetadata {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -454,15 +462,14 @@ function Set-Metadata {
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
     }
     catch {
-        Write-LogEntry -Message "Failed to set metadata: $_" -Level 'Warning'
+        Write-SPVidCompLogEntry -Message "Failed to set metadata: $_" -Level 'Warning'
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-Metadata
-# Purpose: Retrieve metadata value by key
+# Function: Get-SPVidCompMetadata # Purpose: Retrieve metadata value by key
 #------------------------------------------------------------------------------------------------------------------
-function Get-Metadata {
+function Get-SPVidCompMetadata {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -481,16 +488,16 @@ function Get-Metadata {
         return $null
     }
     catch {
-        Write-LogEntry -Message "Failed to get metadata: $_" -Level 'Warning'
+        Write-SPVidCompLogEntry -Message "Failed to get metadata: $_" -Level 'Warning'
         return $null
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Set-Config (Internal)
+# Function: Set-SPVidCompAllConfig (Internal)
 # Purpose: Store complete configuration in database
 #------------------------------------------------------------------------------------------------------------------
-function Set-Config {
+function Set-SPVidCompAllConfig {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -502,7 +509,7 @@ function Set-Config {
         $boolFields = @(
             'sharepoint_recursive', 'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
             'email_enabled', 'email_use_ssl', 'email_send_on_completion', 'email_send_on_error',
-            'logging_console_output', 'logging_file_output',
+            'logging_console_output',
             'advanced_cleanup_temp_files', 'advanced_verify_checksums', 'advanced_dry_run'
         )
 
@@ -545,20 +552,20 @@ function Set-Config {
         }
 
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
-        Write-LogEntry -Message "Configuration saved successfully" -Level 'Debug'
+        Write-SPVidCompLogEntry -Message "Configuration saved successfully" -Level 'Debug'
         return $true
     }
     catch {
-        Write-LogEntry -Message "Failed to save configuration: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to save configuration: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-AllConfig (Internal)
+# Function: Get-SPVidCompAllConfig (Internal)
 # Purpose: Retrieve all configuration values from database with proper types
 #------------------------------------------------------------------------------------------------------------------
-function Get-AllConfig {
+function Get-SPVidCompAllConfig {
     [CmdletBinding()]
     param()
 
@@ -585,7 +592,7 @@ function Get-AllConfig {
             $boolFields = @(
                 'sharepoint_recursive', 'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
                 'email_enabled', 'email_use_ssl', 'email_send_on_completion', 'email_send_on_error',
-                'logging_console_output', 'logging_file_output',
+                'logging_console_output',
                 'advanced_cleanup_temp_files', 'advanced_verify_checksums', 'advanced_dry_run'
             )
 
@@ -600,16 +607,16 @@ function Get-AllConfig {
         return $config
     }
     catch {
-        Write-LogEntry -Message "Failed to retrieve configuration: $_" -Level 'Error'
+        Write-SPVidCompLogEntry -Message "Failed to retrieve configuration: $_" -Level 'Error'
         return @{}
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-ConfigExists (Internal)
+# Function: Test-SPVidCompConfigExists (Internal)
 # Purpose: Check if configuration exists in database
 #------------------------------------------------------------------------------------------------------------------
-function Test-ConfigExists {
+function Test-SPVidCompConfigExists {
     [CmdletBinding()]
     param()
 
@@ -620,12 +627,162 @@ function Test-ConfigExists {
         return ($result.count -gt 0)
     }
     catch {
-        Write-LogEntry -Message "Failed to check config existence: $_" -Level 'Warning'
+        Write-SPVidCompLogEntry -Message "Failed to check config existence: $_" -Level 'Warning'
+        return $false
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Add-LogEntry (Internal)
+# Purpose: Write a log entry to the database
+#------------------------------------------------------------------------------------------------------------------
+function Add-SPVidCompLogEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateSet('Debug', 'Info', 'Warning', 'Error')]
+        [string]$Level = 'Info',
+
+        [Parameter(Mandatory = $false)]
+        [string]$Component = '',
+
+        [Parameter(Mandatory = $false)]
+        [string]$Context = $null
+    )
+
+    try {
+        $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'
+
+        $query = @"
+INSERT INTO logs (timestamp, level, component, message, context)
+VALUES (@timestamp, @level, @component, @message, @context);
+"@
+
+        $parameters = @{
+            timestamp = $timestamp
+            level = $Level
+            component = $Component
+            message = $Message
+            context = $Context
+        }
+
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters | Out-Null
+
+        return $true
+    }
+    catch {
+        # Cannot log to database, this error needs to go to fallback file logging
+        return $false
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Get-LogEntries (Internal)
+# Purpose: Retrieve log entries from the database
+#------------------------------------------------------------------------------------------------------------------
+function Get-SPVidCompLogEntries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [ValidateSet('Debug', 'Info', 'Warning', 'Error')]
+        [string]$Level = $null,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Component = $null,
+
+        [Parameter(Mandatory = $false)]
+        [int]$Limit = 100,
+
+        [Parameter(Mandatory = $false)]
+        [Nullable[datetime]]$StartDate = $null,
+
+        [Parameter(Mandatory = $false)]
+        [Nullable[datetime]]$EndDate = $null
+    )
+
+    try {
+        $whereConditions = @()
+        $parameters = @{}
+
+        if ($Level) {
+            $whereConditions += "level = @level"
+            $parameters['level'] = $Level
+        }
+
+        if ($Component) {
+            $whereConditions += "component = @component"
+            $parameters['component'] = $Component
+        }
+
+        if ($PSBoundParameters.ContainsKey('StartDate')) {
+            $whereConditions += "timestamp >= @startdate"
+            $parameters['startdate'] = $StartDate.ToString('yyyy-MM-dd HH:mm:ss')
+        }
+
+        if ($PSBoundParameters.ContainsKey('EndDate')) {
+            $whereConditions += "timestamp <= @enddate"
+            $parameters['enddate'] = $EndDate.ToString('yyyy-MM-dd HH:mm:ss')
+        }
+
+        $whereClause = if ($whereConditions.Count -gt 0) {
+            "WHERE " + ($whereConditions -join " AND ")
+        } else {
+            ""
+        }
+
+        $query = @"
+SELECT id, timestamp, level, component, message, context
+FROM logs
+$whereClause
+ORDER BY timestamp DESC
+LIMIT $Limit;
+"@
+
+        if ($parameters.Count -gt 0) {
+            return Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
+        } else {
+            return Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query
+        }
+    }
+    catch {
+        Write-Error "Failed to retrieve log entries: $_"
+        return @()
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Clear-OldLogEntries (Internal)
+# Purpose: Remove log entries older than specified retention period
+#------------------------------------------------------------------------------------------------------------------
+function Clear-SPVidCompOldLogEntries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$RetentionDays
+    )
+
+    try {
+        $cutoffDate = (Get-Date).AddDays(-$RetentionDays).ToString('yyyy-MM-dd HH:mm:ss')
+
+        $query = "DELETE FROM logs WHERE timestamp < @cutoffdate;"
+        $parameters = @{ cutoffdate = $cutoffDate }
+
+        $result = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
+
+        Write-SPVidCompLogEntry -Message "Cleaned up log entries older than $RetentionDays days (cutoff: $cutoffDate)" -Level 'Debug'
+
+        return $true
+    }
+    catch {
+        Write-SPVidCompLogEntry -Message "Failed to clean up old log entries: $_" -Level 'Warning'
         return $false
     }
 }
 
 # Export functions
-Export-ModuleMember -Function Initialize-Database, Add-VideoToDatabase, Get-VideosFromDatabase, `
-    Update-VideoStatus, Add-ProcessingLogEntry, Get-DatabaseStatistics, Set-Metadata, Get-Metadata, `
-    Set-Config, Get-AllConfig, Test-ConfigExists
+Export-ModuleMember -Function Initialize-SPVidCompDatabase, Add-SPVidCompVideoToDatabase, Get-SPVidCompVideosFromDatabase, `
+    Update-SPVidCompVideoStatus, Add-SPVidCompProcessingLogEntry, Get-SPVidCompDatabaseStatistics, Set-SPVidCompMetadata, Get-SPVidCompMetadata, `
+    Set-SPVidCompAllConfig, Get-SPVidCompAllConfig, Add-SPVidCompLogEntry, Get-SPVidCompLogEntries, Clear-SPVidCompOldLogEntries
