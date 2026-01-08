@@ -17,6 +17,102 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 - **Progress Tracking**: Resume from any interruption
 - **Comprehensive Logging**: Detailed logs with rotation
 
+## Multi-Scope Configuration
+
+The solution supports flexible video discovery across different organizational boundaries. You can choose from four scope levels during setup:
+
+### Scope Modes
+
+1. **Single Library** (Default)
+   - Scan one specific document library
+   - Ideal for targeted compression jobs
+   - Fastest setup for focused tasks
+
+2. **Site-Wide**
+   - Select multiple libraries from a single SharePoint site
+   - Useful for site-level video management
+   - Process all video-containing libraries in one site
+
+3. **Multiple Sites**
+   - Choose specific libraries from multiple sites
+   - Flexible cross-site video management
+   - Great for departmental or regional rollouts
+
+4. **Tenant-Wide**
+   - Discover and select from all sites in your SharePoint tenant
+   - **Requires SharePoint Admin permissions**
+   - Admin URL format: `https://[tenant]-admin.sharepoint.com`
+   - Ideal for organization-wide video optimization
+
+### Interactive Selection
+
+The setup wizard uses **Microsoft.PowerShell.ConsoleGuiTools** for an intuitive selection experience:
+- Navigate with ↑↓ arrow keys
+- Select/deselect items with Space bar
+- Filter by typing keywords
+- Confirm selections with Enter
+- Multi-select support for sites and libraries
+
+The module is automatically installed if not present.
+
+### Setup Example
+
+```powershell
+# Run setup wizard
+.\Compress-SharePointVideos.ps1 -Setup
+
+# Choose scope mode (1-4)
+# For Single Library:
+#   1. Enter site URL
+#   2. Select library from interactive grid
+#   3. Optional: specify folder path within library
+#   4. Choose recursive scanning (Y/n)
+
+# For Tenant-Wide:
+#   1. Enter SharePoint Admin Center URL
+#   2. Wait for site discovery (may take 30s-2min for large tenants)
+#   3. Select sites from grid (Space to select, Enter to confirm)
+#   4. For each selected site, choose libraries
+#   5. Review final configuration
+
+# Run catalog phase across all configured scopes
+.\Compress-SharePointVideos.ps1 -Phase Catalog
+
+# Process videos from all scopes
+.\Compress-SharePointVideos.ps1 -Phase Process
+```
+
+### Managing Scopes
+
+After setup, your configured scopes are displayed when running the script:
+
+```powershell
+.\Compress-SharePointVideos.ps1
+
+# Output shows:
+# SharePoint Settings:
+#   Scope Mode         : Multiple
+#
+#   Configured Scopes  : 3
+#     [1] Documents @ contoso.sharepoint.com/sites/Marketing (25 videos, 2.5 GB)
+#     [2] Videos @ contoso.sharepoint.com/sites/Sales (18 videos, 1.8 GB)
+#     [3] Shared Documents @ contoso.sharepoint.com/sites/HR (not yet scanned)
+```
+
+Each scope is scanned independently during the catalog phase. Videos are tagged with their source scope for tracking and reporting.
+
+### Note on Database Reset
+
+If you have an existing development database and want to reconfigure scopes, simply delete the database and re-run setup:
+
+```powershell
+# Remove old database
+Remove-Item data/video-catalog.db -ErrorAction SilentlyContinue
+
+# Run setup with new multi-scope configuration
+.\Compress-SharePointVideos.ps1 -Setup
+```
+
 ## Prerequisites
 
 ### Required Software
@@ -28,6 +124,7 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 The following modules will be automatically installed if missing:
 - **PnP.PowerShell** - SharePoint Online authentication and operations
 - **PSSQLite** - SQLite database operations
+- **Microsoft.PowerShell.ConsoleGuiTools** - Interactive site/library selection during setup
 
 ### Network & Access
 - Network access to SharePoint Online tenant
@@ -99,7 +196,7 @@ Or explicitly run setup:
 ```
 
 The setup wizard will prompt you for all necessary configuration:
-- **SharePoint Settings**: Site URL, library name, folder path
+- **SharePoint Scope Configuration**: Choose scope mode (Single/Site/Multiple/Tenant) and select sites/libraries interactively
 - **File Paths**: Temp download, external archive, logs (with platform-aware defaults)
 - **Compression Settings**: Frame rate, codec, timeout
 - **Processing Settings**: Max parallel jobs, retry attempts, disk space requirements
@@ -246,11 +343,12 @@ All configuration is stored in the SQLite database (`data/video-catalog.db`) as 
 
 The interactive setup wizard collects configuration in these categories:
 
-#### SharePoint Settings
-- **Site URL**: SharePoint site to scan
-- **Library Name**: Document library containing videos
-- **Folder Path**: Optional subfolder within library
-- **Recursive**: Scan subfolders (yes/no)
+#### SharePoint Scope Settings
+- **Scope Mode**: Discovery scope (Single/Site/Multiple/Tenant)
+- **Admin Site URL**: SharePoint Admin Center URL (Tenant mode only)
+- **Configured Scopes**: One or more site/library combinations selected interactively
+  - Each scope includes: Site URL, Library Name, optional Folder Path, Recursive flag
+- **Interactive Selection**: Use ConsoleGuiTools grid for intuitive site/library selection
 
 #### File Paths
 - **Temp Download Path**: Local temporary storage

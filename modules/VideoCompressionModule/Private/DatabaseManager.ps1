@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS videos (
     site_url TEXT NOT NULL,
     library_name TEXT NOT NULL,
     folder_path TEXT,
+    scope_id INTEGER REFERENCES scopes(id),
     filename TEXT NOT NULL,
     original_size INTEGER NOT NULL,
     modified_date TEXT NOT NULL,
@@ -90,10 +91,41 @@ CREATE TABLE IF NOT EXISTS videos (
         $indexQueries = @(
             "CREATE INDEX IF NOT EXISTS idx_status ON videos(status);",
             "CREATE INDEX IF NOT EXISTS idx_site_url ON videos(site_url);",
-            "CREATE INDEX IF NOT EXISTS idx_cataloged_date ON videos(cataloged_date);"
+            "CREATE INDEX IF NOT EXISTS idx_cataloged_date ON videos(cataloged_date);",
+            "CREATE INDEX IF NOT EXISTS idx_videos_scope_id ON videos(scope_id);"
         )
 
         foreach ($query in $indexQueries) {
+            Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query
+        }
+
+        # Create scopes table
+        $scopesTableQuery = @"
+CREATE TABLE IF NOT EXISTS scopes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_mode TEXT NOT NULL CHECK (scope_mode IN ('Single', 'Site', 'Multiple', 'Tenant')),
+    site_url TEXT NOT NULL,
+    library_name TEXT,
+    folder_path TEXT,
+    recursive INTEGER NOT NULL DEFAULT 1,
+    display_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_date TEXT NOT NULL,
+    last_scanned_date TEXT,
+    video_count INTEGER DEFAULT 0,
+    total_size INTEGER DEFAULT 0
+);
+"@
+
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $scopesTableQuery
+
+        # Create indices for scopes table
+        $scopeIndexQueries = @(
+            "CREATE INDEX IF NOT EXISTS idx_scopes_enabled ON scopes(enabled);",
+            "CREATE INDEX IF NOT EXISTS idx_scopes_site_url ON scopes(site_url);"
+        )
+
+        foreach ($query in $scopeIndexQueries) {
             Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query
         }
 
@@ -115,11 +147,9 @@ CREATE TABLE IF NOT EXISTS processing_log (
         $configQuery = @"
 CREATE TABLE IF NOT EXISTS config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    -- SharePoint settings
-    sharepoint_site_url TEXT NOT NULL,
-    sharepoint_library_name TEXT NOT NULL,
-    sharepoint_folder_path TEXT,
-    sharepoint_recursive INTEGER NOT NULL DEFAULT 1,
+    -- SharePoint scope settings
+    scope_mode TEXT DEFAULT 'Single',
+    admin_site_url TEXT,
     -- Path settings
     paths_temp_download TEXT NOT NULL,
     paths_external_archive TEXT NOT NULL,
@@ -128,6 +158,7 @@ CREATE TABLE IF NOT EXISTS config (
     compression_video_codec TEXT NOT NULL DEFAULT 'libx265',
     compression_timeout_minutes INTEGER NOT NULL DEFAULT 60,
     -- Processing settings
+    processing_max_parallel_jobs INTEGER NOT NULL DEFAULT 1,
     processing_retry_attempts INTEGER NOT NULL DEFAULT 3,
     processing_required_disk_space_gb INTEGER NOT NULL DEFAULT 50,
     processing_duration_tolerance_seconds INTEGER NOT NULL DEFAULT 1,
@@ -221,15 +252,18 @@ function Add-SPVidCompVideoToDatabase {
         [long]$OriginalSize,
 
         [Parameter(Mandatory = $true)]
-        [DateTime]$ModifiedDate
+        [DateTime]$ModifiedDate,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ScopeId = $null
     )
 
     try {
         $query = @"
 INSERT OR IGNORE INTO videos
-(sharepoint_url, site_url, library_name, folder_path, filename, original_size, modified_date, cataloged_date, status)
+(sharepoint_url, site_url, library_name, folder_path, filename, original_size, modified_date, cataloged_date, status, scope_id)
 VALUES
-(@sharepoint_url, @site_url, @library_name, @folder_path, @filename, @original_size, @modified_date, @cataloged_date, 'Cataloged');
+(@sharepoint_url, @site_url, @library_name, @folder_path, @filename, @original_size, @modified_date, @cataloged_date, 'Cataloged', @scope_id);
 "@
 
         $parameters = @{
@@ -241,6 +275,7 @@ VALUES
             original_size = $OriginalSize
             modified_date = $ModifiedDate.ToString('yyyy-MM-dd HH:mm:ss')
             cataloged_date = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+            scope_id = $ScopeId
         }
 
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
@@ -507,7 +542,7 @@ function Set-SPVidCompAllConfig {
     try {
         # Convert string booleans to integers for database
         $boolFields = @(
-            'sharepoint_recursive', 'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
+            'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
             'email_enabled', 'email_use_ssl', 'email_send_on_completion', 'email_send_on_error',
             'logging_console_output',
             'advanced_cleanup_temp_files', 'advanced_verify_checksums', 'advanced_dry_run'
@@ -590,7 +625,7 @@ function Get-SPVidCompAllConfig {
 
             # Convert INTEGER booleans (0/1) back to strings for compatibility
             $boolFields = @(
-                'sharepoint_recursive', 'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
+                'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
                 'email_enabled', 'email_use_ssl', 'email_send_on_completion', 'email_send_on_error',
                 'logging_console_output',
                 'advanced_cleanup_temp_files', 'advanced_verify_checksums', 'advanced_dry_run'

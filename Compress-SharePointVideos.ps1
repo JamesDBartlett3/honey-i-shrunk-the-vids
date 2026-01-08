@@ -106,10 +106,28 @@ function Show-SPVidCompCurrentConfig {
     Show-SPVidCompHeader "CURRENT CONFIGURATION"
 
     Write-Host "SharePoint Settings:" -ForegroundColor Yellow
-    Write-Host "  Site URL           : $($Config['sharepoint_site_url'])" -ForegroundColor White
-    Write-Host "  Library Name       : $($Config['sharepoint_library_name'])" -ForegroundColor White
-    Write-Host "  Folder Path        : $($Config['sharepoint_folder_path'])" -ForegroundColor White
-    Write-Host "  Recursive Scan     : $($Config['sharepoint_recursive'])" -ForegroundColor White
+    $scopeMode = if ($Config.ContainsKey('scope_mode')) { $Config['scope_mode'] } else { 'Single' }
+    Write-Host "  Scope Mode         : $scopeMode" -ForegroundColor White
+
+    if ($scopeMode -eq 'Tenant' -and $Config.ContainsKey('admin_site_url')) {
+        Write-Host "  Admin Center URL   : $($Config['admin_site_url'])" -ForegroundColor White
+    }
+
+    # Display configured scopes
+    $scopes = Get-SPVidCompScopes -EnabledOnly
+    Write-Host "`n  Configured Scopes  : $($scopes.Count)" -ForegroundColor White
+    if ($scopes.Count -gt 0) {
+        foreach ($scope in $scopes) {
+            $stats = if ($scope.video_count -gt 0) {
+                "($($scope.video_count) videos, $([math]::Round($scope.total_size / 1GB, 2)) GB)"
+            } else {
+                "(not yet scanned)"
+            }
+            Write-Host "    [$($scope.id)] $($scope.display_name) $stats" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "    (No scopes configured - run -Setup)" -ForegroundColor Red
+    }
 
     Write-Host "`nPaths:" -ForegroundColor Yellow
     Write-Host "  Temp Download      : $($Config['paths_temp_download'])" -ForegroundColor White
@@ -167,12 +185,64 @@ function Initialize-SPVidCompConfiguration {
 
     $config = @{}
 
-    # SharePoint Settings
-    Write-Host "`n--- SharePoint Settings ---" -ForegroundColor Cyan
-    $config['sharepoint_site_url'] = Read-SPVidCompUserInput -Prompt "SharePoint Site URL (e.g., https://contoso.sharepoint.com/sites/YourSite)" -Required
-    $config['sharepoint_library_name'] = Read-SPVidCompUserInput -Prompt "Library Name (e.g., Documents, Videos, Shared Documents)" -Required
-    $config['sharepoint_folder_path'] = Read-SPVidCompUserInput -Prompt "Folder Path (optional, e.g., /Videos)" -DefaultValue ""
-    $config['sharepoint_recursive'] = (Read-SPVidCompYesNo -Prompt "Scan subfolders recursively?" -DefaultValue $true).ToString()
+    # SharePoint Scope Configuration
+    Write-Host "`n--- SharePoint Scope Configuration ---" -ForegroundColor Cyan
+    Write-Host "Choose the scope of video discovery:" -ForegroundColor Yellow
+    Write-Host "  [1] Single Library - One specific library" -ForegroundColor White
+    Write-Host "  [2] Site-Wide - All libraries in one site" -ForegroundColor White
+    Write-Host "  [3] Multiple Sites - Select from multiple sites" -ForegroundColor White
+    Write-Host "  [4] Tenant-Wide - All sites in tenant (requires admin)" -ForegroundColor White
+
+    $scopeChoice = Read-Host "`nYour choice [1-4]"
+
+    $scopeMode = switch ($scopeChoice) {
+        '1' { 'Single' }
+        '2' { 'Site' }
+        '3' { 'Multiple' }
+        '4' { 'Tenant' }
+        default { 'Single' }
+    }
+
+    Write-Host "Selected mode: $scopeMode" -ForegroundColor Green
+
+    # If tenant mode, require admin URL
+    $adminSiteUrl = $null
+    if ($scopeMode -eq 'Tenant') {
+        $adminSiteUrl = Read-SPVidCompUserInput -Prompt "SharePoint Admin Center URL (e.g., https://contoso-admin.sharepoint.com)" -Required
+        $config['admin_site_url'] = $adminSiteUrl
+    }
+    else {
+        $config['admin_site_url'] = ''
+    }
+
+    # Check for ConsoleGuiTools
+    Write-Host "`nChecking for Microsoft.PowerShell.ConsoleGuiTools..." -ForegroundColor Yellow
+    $hasConsoleGuiTools = Get-Module -ListAvailable -Name Microsoft.PowerShell.ConsoleGuiTools
+    if (-not $hasConsoleGuiTools) {
+        Write-Host "Installing Microsoft.PowerShell.ConsoleGuiTools..." -ForegroundColor Yellow
+        Install-Module -Name Microsoft.PowerShell.ConsoleGuiTools -Scope CurrentUser -Force -AllowClobber
+    }
+    Import-Module Microsoft.PowerShell.ConsoleGuiTools -ErrorAction Stop
+
+    # Interactive scope selection
+    Write-Host "`nStarting interactive scope selection..." -ForegroundColor Cyan
+    Write-Host "  (Use arrow keys to navigate, Space to select, Enter to confirm)" -ForegroundColor Gray
+
+    $scopes = Select-SPVidCompScopesInteractive -ScopeMode $scopeMode -AdminSiteUrl $adminSiteUrl
+
+    if ($scopes.Count -eq 0) {
+        throw "No scopes selected. Setup cannot proceed without at least one scope."
+    }
+
+    Write-Host "`n========================================" -ForegroundColor Green
+    Write-Host "Selected $($scopes.Count) scope(s):" -ForegroundColor Green
+    foreach ($scope in $scopes) {
+        Write-Host "  ✓ $($scope.DisplayName)" -ForegroundColor White
+    }
+    Write-Host "========================================`n" -ForegroundColor Green
+
+    # Store scope mode in config
+    $config['scope_mode'] = $scopeMode
 
     # Paths - Platform-aware defaults
     Write-Host "`n--- File Paths ---" -ForegroundColor Cyan
@@ -277,7 +347,19 @@ function Initialize-SPVidCompConfiguration {
     # Save configuration
     $null = Set-SPVidCompConfig -ConfigValues $config
 
-    Write-Host "Configuration saved successfully!" -ForegroundColor Green
+    # Save scopes to database
+    Write-Host "Saving scope configuration..." -ForegroundColor Yellow
+    foreach ($scope in $scopes) {
+        $scopeId = Add-SPVidCompScope -SiteUrl $scope.SiteUrl `
+            -LibraryName $scope.LibraryName `
+            -ScopeMode $scopeMode `
+            -DisplayName $scope.DisplayName `
+            -FolderPath $scope.FolderPath `
+            -Recursive $scope.Recursive
+        Write-Host "  Saved: $($scope.DisplayName) (Scope ID: $scopeId)" -ForegroundColor Gray
+    }
+
+    Write-Host "`nSetup complete!" -ForegroundColor Green
 
     return $config
 }
@@ -363,42 +445,99 @@ if ($Phase -in @('Catalog', 'Both')) {
     try {
         Show-SPVidCompHeader "PHASE 1: CATALOG DISCOVERY"
 
-        # Connect to SharePoint
-        Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
-        $siteUrl = Get-SPVidCompConfigValue -Key 'sharepoint_site_url'
-        $null = Connect-SPVidCompSharePoint -SiteUrl $siteUrl
+        Write-SPVidCompLog -Message "Starting catalog phase" -Level 'Info'
 
-        # Scan for videos
-        Write-Host "`nScanning SharePoint for MP4 videos..." -ForegroundColor Yellow
-        $libraryName = Get-SPVidCompConfigValue -Key 'sharepoint_library_name'
-        $folderPath = Get-SPVidCompConfigValue -Key 'sharepoint_folder_path'
-        $recursive = [bool]::Parse((Get-SPVidCompConfigValue -Key 'sharepoint_recursive'))
+        # Get all enabled scopes
+        $scopes = Get-SPVidCompScopes -EnabledOnly
 
-        $catalogedCount = Get-SPVidCompFiles -SiteUrl $siteUrl `
-            -LibraryName $libraryName `
-            -FolderPath $folderPath `
-            -Recursive $recursive
-
-        Write-Host "`nCataloging complete!" -ForegroundColor Green
-        Write-Host "Total videos cataloged: $catalogedCount" -ForegroundColor Green
-
-        # Show catalog statistics
-        Write-Host "`nCatalog Statistics:" -ForegroundColor Yellow
-        $stats = Get-SPVidCompStatistics
-
-        Write-Host "  Total Videos: $($stats.TotalCataloged)" -ForegroundColor White
-        Write-Host "  Total Size: $([math]::Round($stats.TotalOriginalSize / 1GB, 2)) GB" -ForegroundColor White
-
-        Write-Host "`nStatus Breakdown:" -ForegroundColor Yellow
-        foreach ($status in $stats.StatusBreakdown) {
-            Write-Host "  $($status.status): $($status.count)" -ForegroundColor White
+        if ($scopes.Count -eq 0) {
+            throw "No enabled scopes found. Run with -Setup to configure scopes."
         }
+
+        Write-Host "Scanning $($scopes.Count) enabled scope(s)...`n" -ForegroundColor Yellow
+
+        $totalCataloged = 0
+        $scopeIndex = 0
+
+        foreach ($scope in $scopes) {
+            $scopeIndex++
+
+            Write-Host "========================================" -ForegroundColor Cyan
+            Write-Host "Scope $scopeIndex of $($scopes.Count): $($scope.display_name)" -ForegroundColor Cyan
+            Write-Host "========================================" -ForegroundColor Cyan
+            Write-Host "  Site URL       : $($scope.site_url)" -ForegroundColor Gray
+            Write-Host "  Library        : $($scope.library_name)" -ForegroundColor Gray
+            if ($scope.folder_path) {
+                Write-Host "  Folder Path    : $($scope.folder_path)" -ForegroundColor Gray
+            }
+            Write-Host "  Recursive Scan : $($scope.recursive -eq 1)" -ForegroundColor Gray
+            Write-Host ""
+
+            try {
+                # Connect to this specific site
+                Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
+                $null = Connect-SPVidCompSharePoint -SiteUrl $scope.site_url
+
+                # Scan library for videos
+                Write-Host "Enumerating videos..." -ForegroundColor Yellow
+                $catalogedCount = Get-SPVidCompFiles -SiteUrl $scope.site_url `
+                    -LibraryName $scope.library_name `
+                    -FolderPath $scope.folder_path `
+                    -Recursive ([bool]$scope.recursive) `
+                    -ScopeId $scope.id
+
+                $totalCataloged += $catalogedCount
+
+                # Update scope statistics
+                Update-SPVidCompScopeStats -ScopeId $scope.id
+
+                Write-Host "  ✓ Cataloged: $catalogedCount videos" -ForegroundColor Green
+                Write-SPVidCompLog -Message "Scope '$($scope.display_name)' cataloged $catalogedCount videos" -Level 'Info'
+            }
+            catch {
+                Write-Host "  ✗ Failed to catalog scope: $_" -ForegroundColor Red
+                Write-SPVidCompLog -Message "Scope '$($scope.display_name)' failed: $_" -Level 'Error'
+                # Continue to next scope (don't fail entire catalog)
+            }
+            finally {
+                # Disconnect from this site
+                Disconnect-SPVidCompSharePoint
+            }
+
+            Write-Host ""
+        }
+
+        Write-Host "========================================" -ForegroundColor Green
+        Write-Host "Catalog Phase Complete" -ForegroundColor Green
+        Write-Host "========================================" -ForegroundColor Green
+        Write-Host "Total videos cataloged: $totalCataloged" -ForegroundColor White
+        Write-Host ""
+
+        # Display aggregate statistics
+        $stats = Get-SPVidCompStatistics
+        Write-Host "Database Statistics:" -ForegroundColor Cyan
+        Write-Host "  Total Videos       : $($stats.TotalCataloged)" -ForegroundColor White
+        Write-Host "  Cataloged          : " -NoNewline -ForegroundColor White
+        $catalogedStatus = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Cataloged' }
+        Write-Host "$($catalogedStatus.count)" -ForegroundColor White
+        Write-Host "  Processing         : " -NoNewline -ForegroundColor White
+        $processingStatus = $stats.StatusBreakdown | Where-Object { $_.status -in @('Downloading', 'Compressing', 'Uploading') }
+        $processingCount = ($processingStatus | Measure-Object -Property count -Sum).Sum
+        Write-Host "$processingCount" -ForegroundColor White
+        Write-Host "  Completed          : " -NoNewline -ForegroundColor White
+        $completedStatus = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Completed' }
+        Write-Host "$($completedStatus.count)" -ForegroundColor White
+        Write-Host "  Failed             : " -NoNewline -ForegroundColor White
+        $failedStatus = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Failed' }
+        Write-Host "$($failedStatus.count)" -ForegroundColor White
+        Write-Host "  Total Size         : $([math]::Round($stats.TotalOriginalSize / 1GB, 2)) GB" -ForegroundColor White
+        Write-Host ""
 
         # Store catalog run metadata
         $null = Set-SPVidCompMetadata -Key 'last_catalog_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
         $null = Set-SPVidCompMetadata -Key 'total_cataloged' -Value $stats.TotalCataloged.ToString()
 
-        Write-Host "`nPhase 1 Complete!`n" -ForegroundColor Green
+        Write-SPVidCompLog -Message "Catalog phase completed. Total cataloged: $totalCataloged" -Level 'Info'
     }
     catch {
         Write-SPVidCompLog -Message "Catalog phase failed: $_" -Level 'Error'

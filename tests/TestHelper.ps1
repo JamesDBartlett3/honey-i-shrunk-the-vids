@@ -175,15 +175,14 @@ function Get-TestConfig {
     param()
 
     return @{
-        'sharepoint_site_url' = 'https://test.sharepoint.com'
-        'sharepoint_library_name' = 'Documents'
-        'sharepoint_folder_path' = '/Videos'
-        'sharepoint_recursive' = 'True'
+        'scope_mode' = 'Single'
+        'admin_site_url' = ''
         'paths_temp_download' = '/tmp/test'
         'paths_external_archive' = '/tmp/archive'
         'compression_frame_rate' = '10'
         'compression_video_codec' = 'libx265'
         'compression_timeout_minutes' = '60'
+        'processing_max_parallel_jobs' = '2'
         'processing_retry_attempts' = '3'
         'processing_required_disk_space_gb' = '50'
         'processing_duration_tolerance_seconds' = '1'

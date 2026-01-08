@@ -8,6 +8,8 @@ $privatePath = Join-Path -Path $PSScriptRoot -ChildPath 'Private'
 . (Join-Path -Path $privatePath -ChildPath 'Logger.ps1')
 . (Join-Path -Path $privatePath -ChildPath 'DatabaseManager.ps1')
 . (Join-Path -Path $privatePath -ChildPath 'EmailHelper.ps1')
+. (Join-Path -Path $privatePath -ChildPath 'ScopeDiscovery.ps1')
+. (Join-Path -Path $privatePath -ChildPath 'ScopeManager.ps1')
 
 # Module-level variables
 $Script:Config = $null
@@ -512,13 +514,16 @@ function Add-SPVidCompVideo {
         [long]$OriginalSize,
 
         [Parameter(Mandatory = $true)]
-        [DateTime]$ModifiedDate
+        [DateTime]$ModifiedDate,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ScopeId = $null
     )
 
     try {
         $result = Add-SPVidCompVideoToDatabase -SharePointUrl $SharePointUrl -SiteUrl $SiteUrl `
             -LibraryName $LibraryName -FolderPath $FolderPath -Filename $Filename `
-            -OriginalSize $OriginalSize -ModifiedDate $ModifiedDate
+            -OriginalSize $OriginalSize -ModifiedDate $ModifiedDate -ScopeId $ScopeId
 
         if ($result) {
             Write-SPVidCompLog -Message "Video added to catalog: $Filename" -Level 'Debug'
@@ -601,7 +606,10 @@ function Get-SPVidCompFiles {
         [string]$FolderPath = '',
 
         [Parameter(Mandatory = $false)]
-        [bool]$Recursive = $true
+        [bool]$Recursive = $true,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ScopeId = $null
     )
 
     try {
@@ -627,7 +635,7 @@ function Get-SPVidCompFiles {
             # Add to catalog
             $added = Add-SPVidCompVideo -SharePointUrl $fullUrl -SiteUrl $SiteUrl `
                 -LibraryName $LibraryName -FolderPath $fileFolderPath -Filename $filename `
-                -OriginalSize $fileSize -ModifiedDate $modifiedDate
+                -OriginalSize $fileSize -ModifiedDate $modifiedDate -ScopeId $ScopeId
 
             if ($added) {
                 $catalogedCount++
@@ -1615,4 +1623,7 @@ Export-ModuleMember -Function Initialize-SPVidCompConfig, Connect-SPVidCompShare
     Send-SPVidCompVideo, Write-SPVidCompLog, Send-SPVidCompNotification, Test-SPVidCompDiskSpace, `
     Get-SPVidCompStatistics, Test-SPVidCompConfigExists, Get-SPVidCompConfig, Set-SPVidCompConfig, `
     Get-SPVidCompPlatformDefaults, Get-SPVidCompIllegalCharacters, Test-SPVidCompFilenameCharacters, `
-    Repair-SPVidCompFilename, Test-SPVidCompFFmpegAvailability, Install-SPVidCompFFmpeg
+    Repair-SPVidCompFilename, Test-SPVidCompFFmpegAvailability, Install-SPVidCompFFmpeg, `
+    Get-SPVidCompDiscoverTenantSites, Get-SPVidCompDiscoverSiteLibraries, Select-SPVidCompScopesInteractive, `
+    Add-SPVidCompScope, Get-SPVidCompScopes, Update-SPVidCompScopeStats, Remove-SPVidCompScope, `
+    Enable-SPVidCompScope, Disable-SPVidCompScope
