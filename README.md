@@ -5,6 +5,7 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 ## Features
 
 - **Cross-Platform Compatible**: Runs on Windows, macOS, and Linux (PowerShell 7.0+)
+- **Parallel Video Processing**: Process multiple videos concurrently (1-8 jobs) for dramatically faster batch operations
 - **Two-Phase Approach**: Catalog all videos first, then process them systematically
 - **SQLite Catalog**: Persistent database tracking with resume capability
 - **Safety-First Design**: Archive and verify BEFORE compression
@@ -101,7 +102,7 @@ The setup wizard will prompt you for all necessary configuration:
 - **SharePoint Settings**: Site URL, library name, folder path
 - **File Paths**: Temp download, external archive, logs (with platform-aware defaults)
 - **Compression Settings**: Frame rate, codec, timeout
-- **Processing Settings**: Retry attempts, disk space requirements
+- **Processing Settings**: Max parallel jobs, retry attempts, disk space requirements
 - **Illegal Character Handling**: Strategy for filenames with illegal characters
 - **Email Notifications**: SMTP settings (optional)
 - **Logging Settings**: Log level, output options
@@ -286,6 +287,10 @@ The interactive setup wizard collects configuration in these categories:
 - `hevc_qsv` - Intel Quick Sync H.265
 
 #### Processing Settings
+- **Max Parallel Jobs**: Number of videos to process concurrently (default: CPU cores - 1, range: 1-8)
+  - Dramatically reduces total processing time for large catalogs
+  - System auto-detects optimal value: reserves one core for main script and system
+  - Set to 1 for sequential processing (backward compatible)
 - **Retry Attempts**: Times to retry failed videos (default: 3)
 - **Required Disk Space**: Minimum free space in GB (default: 50)
 - **Duration Tolerance**: Acceptable duration difference in seconds (default: 1)

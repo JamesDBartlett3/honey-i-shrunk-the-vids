@@ -31,14 +31,14 @@ Import-Module $modulePath -Force
 #------------------------------------------------------------------------------------------------------------------
 # Helper Functions
 #------------------------------------------------------------------------------------------------------------------
-function Show-Header {
+function Show-SPVidCompHeader {
     param([string]$Title)
     Write-Host "`n========================================" -ForegroundColor Cyan
     Write-Host $Title -ForegroundColor Cyan
     Write-Host "========================================`n" -ForegroundColor Cyan
 }
 
-function Read-UserInput {
+function Read-SPVidCompUserInput {
     param(
         [string]$Prompt,
         [string]$DefaultValue = '',
@@ -61,7 +61,7 @@ function Read-UserInput {
     return $userInput
 }
 
-function Read-YesNo {
+function Read-SPVidCompYesNo {
     param(
         [string]$Prompt,
         [bool]$DefaultValue = $true
@@ -77,10 +77,33 @@ function Read-YesNo {
     return $response -match '^[Yy]'
 }
 
-function Show-CurrentConfig {
+function Get-SPVidCompConfigValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [Parameter(Mandatory = $false)]
+        [string]$DefaultValue = $null
+    )
+
+    if ($Script:Config.PSObject.Properties.Name -contains $Key) {
+        $value = $Script:Config.$Key
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            return $value
+        }
+    }
+
+    if ($null -ne $DefaultValue) {
+        return $DefaultValue
+    }
+
+    throw "Configuration key '$Key' not found and no default value provided"
+}
+
+function Show-SPVidCompCurrentConfig {
     param([hashtable]$Config)
 
-    Show-Header "CURRENT CONFIGURATION"
+    Show-SPVidCompHeader "CURRENT CONFIGURATION"
 
     Write-Host "SharePoint Settings:" -ForegroundColor Yellow
     Write-Host "  Site URL           : $($Config['sharepoint_site_url'])" -ForegroundColor White
@@ -98,6 +121,7 @@ function Show-CurrentConfig {
     Write-Host "  Timeout (minutes)  : $($Config['compression_timeout_minutes'])" -ForegroundColor White
 
     Write-Host "`nProcessing:" -ForegroundColor Yellow
+    Write-Host "  Max Parallel Jobs  : $($Config['processing_max_parallel_jobs'])" -ForegroundColor White
     Write-Host "  Retry Attempts     : $($Config['processing_retry_attempts'])" -ForegroundColor White
     Write-Host "  Required Disk Space: $($Config['processing_required_disk_space_gb']) GB" -ForegroundColor White
     Write-Host "  Duration Tolerance : $($Config['processing_duration_tolerance_seconds']) seconds" -ForegroundColor White
@@ -122,8 +146,8 @@ function Show-CurrentConfig {
     Write-Host ""
 }
 
-function Initialize-Configuration {
-    Show-Header "INTERACTIVE SETUP"
+function Initialize-SPVidCompConfiguration {
+    Show-SPVidCompHeader "INTERACTIVE SETUP"
 
     Write-Host "Welcome to the SharePoint Video Compression setup wizard." -ForegroundColor Green
     Write-Host "Please provide the following configuration details.`n" -ForegroundColor Green
@@ -145,47 +169,54 @@ function Initialize-Configuration {
 
     # SharePoint Settings
     Write-Host "`n--- SharePoint Settings ---" -ForegroundColor Cyan
-    $config['sharepoint_site_url'] = Read-UserInput -Prompt "SharePoint Site URL (e.g., https://contoso.sharepoint.com/sites/YourSite)" -Required
-    $config['sharepoint_library_name'] = Read-UserInput -Prompt "Library Name (e.g., Documents, Videos, Shared Documents)" -Required
-    $config['sharepoint_folder_path'] = Read-UserInput -Prompt "Folder Path (optional, e.g., /Videos)" -DefaultValue ""
-    $config['sharepoint_recursive'] = (Read-YesNo -Prompt "Scan subfolders recursively?" -DefaultValue $true).ToString()
+    $config['sharepoint_site_url'] = Read-SPVidCompUserInput -Prompt "SharePoint Site URL (e.g., https://contoso.sharepoint.com/sites/YourSite)" -Required
+    $config['sharepoint_library_name'] = Read-SPVidCompUserInput -Prompt "Library Name (e.g., Documents, Videos, Shared Documents)" -Required
+    $config['sharepoint_folder_path'] = Read-SPVidCompUserInput -Prompt "Folder Path (optional, e.g., /Videos)" -DefaultValue ""
+    $config['sharepoint_recursive'] = (Read-SPVidCompYesNo -Prompt "Scan subfolders recursively?" -DefaultValue $true).ToString()
 
     # Paths - Platform-aware defaults
     Write-Host "`n--- File Paths ---" -ForegroundColor Cyan
-    $config['paths_temp_download'] = Read-UserInput -Prompt "Temp Download Path" -DefaultValue $platformDefaults['TempPath'] -Required
-    $config['paths_external_archive'] = Read-UserInput -Prompt "External Archive Path (where originals will be stored)" -Required
+    $config['paths_temp_download'] = Read-SPVidCompUserInput -Prompt "Temp Download Path" -DefaultValue $platformDefaults['TempPath'] -Required
+    $config['paths_external_archive'] = Read-SPVidCompUserInput -Prompt "External Archive Path (where originals will be stored)" -Required
 
     # Compression Settings
     Write-Host "`n--- Compression Settings ---" -ForegroundColor Cyan
-    $config['compression_frame_rate'] = Read-UserInput -Prompt "Target Frame Rate" -DefaultValue "10"
-    $config['compression_video_codec'] = Read-UserInput -Prompt "Video Codec (libx265, libx264, etc.)" -DefaultValue "libx265"
-    $config['compression_timeout_minutes'] = Read-UserInput -Prompt "Compression Timeout (minutes)" -DefaultValue "60"
+    $config['compression_frame_rate'] = Read-SPVidCompUserInput -Prompt "Target Frame Rate" -DefaultValue "10"
+    $config['compression_video_codec'] = Read-SPVidCompUserInput -Prompt "Video Codec (libx265, libx264, etc.)" -DefaultValue "libx265"
+    $config['compression_timeout_minutes'] = Read-SPVidCompUserInput -Prompt "Compression Timeout (minutes)" -DefaultValue "60"
 
     # Processing Settings
     Write-Host "`n--- Processing Settings ---" -ForegroundColor Cyan
-    $config['processing_retry_attempts'] = Read-UserInput -Prompt "Retry Attempts for Failed Videos" -DefaultValue "3"
-    $config['processing_required_disk_space_gb'] = Read-UserInput -Prompt "Required Disk Space (GB)" -DefaultValue "50"
-    $config['processing_duration_tolerance_seconds'] = Read-UserInput -Prompt "Duration Tolerance (seconds)" -DefaultValue "1"
+
+    # Calculate default parallel jobs (CPU cores - 1, minimum of 1)
+    $cpuCores = [Environment]::ProcessorCount
+    $defaultParallelJobs = [Math]::Max(1, $cpuCores - 1)
+    Write-Host "Detected $cpuCores CPU cores" -ForegroundColor Gray
+
+    $config['processing_max_parallel_jobs'] = Read-SPVidCompUserInput -Prompt "Max Parallel Processing Jobs (1-8)" -DefaultValue $defaultParallelJobs.ToString()
+    $config['processing_retry_attempts'] = Read-SPVidCompUserInput -Prompt "Retry Attempts for Failed Videos" -DefaultValue "3"
+    $config['processing_required_disk_space_gb'] = Read-SPVidCompUserInput -Prompt "Required Disk Space (GB)" -DefaultValue "50"
+    $config['processing_duration_tolerance_seconds'] = Read-SPVidCompUserInput -Prompt "Duration Tolerance (seconds)" -DefaultValue "1"
 
     # Resume Settings
     Write-Host "`n--- Resume Settings ---" -ForegroundColor Cyan
-    $config['resume_enable'] = (Read-YesNo -Prompt "Enable resume capability?" -DefaultValue $true).ToString()
-    $config['resume_skip_processed'] = (Read-YesNo -Prompt "Skip already processed files?" -DefaultValue $true).ToString()
-    $config['resume_reprocess_failed'] = (Read-YesNo -Prompt "Reprocess failed files?" -DefaultValue $true).ToString()
+    $config['resume_enable'] = (Read-SPVidCompYesNo -Prompt "Enable resume capability?" -DefaultValue $true).ToString()
+    $config['resume_skip_processed'] = (Read-SPVidCompYesNo -Prompt "Skip already processed files?" -DefaultValue $true).ToString()
+    $config['resume_reprocess_failed'] = (Read-SPVidCompYesNo -Prompt "Reprocess failed files?" -DefaultValue $true).ToString()
 
     # Email Settings
     Write-Host "`n--- Email Notifications ---" -ForegroundColor Cyan
-    $emailEnabled = Read-YesNo -Prompt "Enable email notifications?" -DefaultValue $false
+    $emailEnabled = Read-SPVidCompYesNo -Prompt "Enable email notifications?" -DefaultValue $false
     $config['email_enabled'] = $emailEnabled.ToString()
 
     if ($emailEnabled) {
-        $config['email_smtp_server'] = Read-UserInput -Prompt "SMTP Server (e.g., smtp.office365.com or smtp.gmail.com)" -Required
-        $config['email_smtp_port'] = Read-UserInput -Prompt "SMTP Port" -DefaultValue "587"
-        $config['email_use_ssl'] = (Read-YesNo -Prompt "Use SSL?" -DefaultValue $true).ToString()
-        $config['email_from'] = Read-UserInput -Prompt "From Address" -Required
-        $config['email_to'] = Read-UserInput -Prompt "To Addresses (comma-separated)" -Required
-        $config['email_send_on_completion'] = (Read-YesNo -Prompt "Send email on completion?" -DefaultValue $true).ToString()
-        $config['email_send_on_error'] = (Read-YesNo -Prompt "Send email on error?" -DefaultValue $true).ToString()
+        $config['email_smtp_server'] = Read-SPVidCompUserInput -Prompt "SMTP Server (e.g., smtp.office365.com or smtp.gmail.com)" -Required
+        $config['email_smtp_port'] = Read-SPVidCompUserInput -Prompt "SMTP Port" -DefaultValue "587"
+        $config['email_use_ssl'] = (Read-SPVidCompYesNo -Prompt "Use SSL?" -DefaultValue $true).ToString()
+        $config['email_from'] = Read-SPVidCompUserInput -Prompt "From Address" -Required
+        $config['email_to'] = Read-SPVidCompUserInput -Prompt "To Addresses (comma-separated)" -Required
+        $config['email_send_on_completion'] = (Read-SPVidCompYesNo -Prompt "Send email on completion?" -DefaultValue $true).ToString()
+        $config['email_send_on_error'] = (Read-SPVidCompYesNo -Prompt "Send email on error?" -DefaultValue $true).ToString()
     }
     else {
         # Email disabled - set empty/default values
@@ -200,14 +231,14 @@ function Initialize-Configuration {
 
     # Logging Settings (database-based)
     Write-Host "`n--- Logging Settings ---" -ForegroundColor Cyan
-    $config['logging_log_level'] = Read-UserInput -Prompt "Log Level (Debug, Info, Warning, Error)" -DefaultValue "Info"
-    $config['logging_console_output'] = (Read-YesNo -Prompt "Enable console output?" -DefaultValue $false).ToString()
-    $config['logging_retention_days'] = Read-UserInput -Prompt "Log Retention (days)" -DefaultValue "30"
+    $config['logging_log_level'] = Read-SPVidCompUserInput -Prompt "Log Level (Debug, Info, Warning, Error)" -DefaultValue "Info"
+    $config['logging_console_output'] = (Read-SPVidCompYesNo -Prompt "Enable console output?" -DefaultValue $false).ToString()
+    $config['logging_retention_days'] = Read-SPVidCompUserInput -Prompt "Log Retention (days)" -DefaultValue "30"
 
     # Advanced Settings
     Write-Host "`n--- Advanced Settings ---" -ForegroundColor Cyan
-    $config['advanced_cleanup_temp_files'] = (Read-YesNo -Prompt "Cleanup temp files after processing?" -DefaultValue $true).ToString()
-    $config['advanced_verify_checksums'] = (Read-YesNo -Prompt "Verify checksums?" -DefaultValue $true).ToString()
+    $config['advanced_cleanup_temp_files'] = (Read-SPVidCompYesNo -Prompt "Cleanup temp files after processing?" -DefaultValue $true).ToString()
+    $config['advanced_verify_checksums'] = (Read-SPVidCompYesNo -Prompt "Verify checksums?" -DefaultValue $true).ToString()
     $config['advanced_dry_run'] = 'False'
 
     # Illegal Character Handling
@@ -226,7 +257,7 @@ function Initialize-Configuration {
     }
 
     if ($config['illegal_char_strategy'] -eq 'Replace') {
-        $config['illegal_char_replacement'] = Read-UserInput -Prompt "Replacement character" -DefaultValue "_"
+        $config['illegal_char_replacement'] = Read-SPVidCompUserInput -Prompt "Replacement character" -DefaultValue "_"
     }
     else {
         $config['illegal_char_replacement'] = '_'
@@ -255,7 +286,7 @@ function Initialize-Configuration {
 # Main Script
 #------------------------------------------------------------------------------------------------------------------
 try {
-    Show-Header "SharePoint Video Compression & Archival"
+    Show-SPVidCompHeader "SharePoint Video Compression & Archival"
 
     # Initialize database first
     $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
@@ -272,7 +303,7 @@ try {
         }
 
         # Run interactive setup
-        $config = Initialize-Configuration
+        $config = Initialize-SPVidCompConfiguration
 
         Write-Host "`nSetup complete! You can now run the script without -Setup parameter." -ForegroundColor Green
         Write-Host "To modify settings in the future, run: .\Compress-SharePointVideos.ps1 -Setup`n" -ForegroundColor Cyan
@@ -283,7 +314,7 @@ try {
     $currentConfig = Get-SPVidCompConfig
 
     # Display current settings and ask for confirmation
-    Show-CurrentConfig -Config $currentConfig
+    Show-SPVidCompCurrentConfig -Config $currentConfig
 
     Write-Host "Do you want to:" -ForegroundColor Yellow
     Write-Host "  [P] Proceed with these settings" -ForegroundColor White
@@ -330,18 +361,18 @@ catch {
 #------------------------------------------------------------------------------------------------------------------
 if ($Phase -in @('Catalog', 'Both')) {
     try {
-        Show-Header "PHASE 1: CATALOG DISCOVERY"
+        Show-SPVidCompHeader "PHASE 1: CATALOG DISCOVERY"
 
         # Connect to SharePoint
         Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
-        $siteUrl = Get-ConfigValue -Key 'sharepoint_site_url'
+        $siteUrl = Get-SPVidCompConfigValue -Key 'sharepoint_site_url'
         $null = Connect-SPVidCompSharePoint -SiteUrl $siteUrl
 
         # Scan for videos
         Write-Host "`nScanning SharePoint for MP4 videos..." -ForegroundColor Yellow
-        $libraryName = Get-ConfigValue -Key 'sharepoint_library_name'
-        $folderPath = Get-ConfigValue -Key 'sharepoint_folder_path'
-        $recursive = [bool]::Parse((Get-ConfigValue -Key 'sharepoint_recursive'))
+        $libraryName = Get-SPVidCompConfigValue -Key 'sharepoint_library_name'
+        $folderPath = Get-SPVidCompConfigValue -Key 'sharepoint_folder_path'
+        $recursive = [bool]::Parse((Get-SPVidCompConfigValue -Key 'sharepoint_recursive'))
 
         $catalogedCount = Get-SPVidCompFiles -SiteUrl $siteUrl `
             -LibraryName $libraryName `
@@ -381,18 +412,18 @@ if ($Phase -in @('Catalog', 'Both')) {
 #------------------------------------------------------------------------------------------------------------------
 if ($Phase -in @('Process', 'Both')) {
     try {
-        Show-Header "PHASE 2: VIDEO PROCESSING"
+        Show-SPVidCompHeader "PHASE 2: VIDEO PROCESSING"
 
         # Connect to SharePoint if not already connected
         if ($Phase -eq 'Process') {
             Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
-            $siteUrl = Get-ConfigValue -Key 'sharepoint_site_url'
+            $siteUrl = Get-SPVidCompConfigValue -Key 'sharepoint_site_url'
             $null = Connect-SPVidCompSharePoint -SiteUrl $siteUrl
         }
 
         # Query videos to process
         Write-Host "`nQuerying videos to process..." -ForegroundColor Yellow
-        $retryAttempts = [int](Get-ConfigValue -Key 'processing_retry_attempts')
+        $retryAttempts = [int](Get-SPVidCompConfigValue -Key 'processing_retry_attempts')
         $videosToProcess = Get-SPVidCompVideos -Status 'Cataloged' -MaxRetryCount $retryAttempts
 
         if (-not $videosToProcess -or $videosToProcess.Count -eq 0) {
@@ -410,8 +441,8 @@ if ($Phase -in @('Process', 'Both')) {
 
         # Check disk space
         Write-Host "Checking disk space..." -ForegroundColor Yellow
-        $tempPath = Get-ConfigValue -Key 'paths_temp_download'
-        $requiredSpaceGB = [int](Get-ConfigValue -Key 'processing_required_disk_space_gb')
+        $tempPath = Get-SPVidCompConfigValue -Key 'paths_temp_download'
+        $requiredSpaceGB = [int](Get-SPVidCompConfigValue -Key 'processing_required_disk_space_gb')
         $requiredSpace = $requiredSpaceGB * 1GB
         $spaceCheck = Test-SPVidCompDiskSpace -Path $tempPath -RequiredBytes $requiredSpace
 
@@ -423,19 +454,48 @@ if ($Phase -in @('Process', 'Both')) {
         Write-Host "Disk space OK: $([math]::Round($spaceCheck.FreeSpace / 1GB, 2)) GB available`n" -ForegroundColor Green
 
         # Get configuration values
-        $archivePath = Get-ConfigValue -Key 'paths_external_archive'
-        $frameRate = [int](Get-ConfigValue -Key 'compression_frame_rate')
-        $videoCodec = Get-ConfigValue -Key 'compression_video_codec'
-        $timeoutMinutes = [int](Get-ConfigValue -Key 'compression_timeout_minutes')
-        $durationTolerance = [int](Get-ConfigValue -Key 'processing_duration_tolerance_seconds')
-        $illegalCharStrategy = Get-ConfigValue -Key 'illegal_char_strategy' -DefaultValue 'Replace'
-        $illegalCharReplacement = Get-ConfigValue -Key 'illegal_char_replacement' -DefaultValue '_'
+        $archivePath = Get-SPVidCompConfigValue -Key 'paths_external_archive'
+        $frameRate = [int](Get-SPVidCompConfigValue -Key 'compression_frame_rate')
+        $videoCodec = Get-SPVidCompConfigValue -Key 'compression_video_codec'
+        $timeoutMinutes = [int](Get-SPVidCompConfigValue -Key 'compression_timeout_minutes')
+        $durationTolerance = [int](Get-SPVidCompConfigValue -Key 'processing_duration_tolerance_seconds')
+        $illegalCharStrategy = Get-SPVidCompConfigValue -Key 'illegal_char_strategy' -DefaultValue 'Replace'
+        $illegalCharReplacement = Get-SPVidCompConfigValue -Key 'illegal_char_replacement' -DefaultValue '_'
+        $maxParallelJobs = [int](Get-SPVidCompConfigValue -Key 'processing_max_parallel_jobs' -DefaultValue '2')
 
-        # Process each video
-        $processedCount = 0
-        $failedCount = 0
+        # Validate and cap parallel jobs
+        if ($maxParallelJobs -lt 1) { $maxParallelJobs = 1 }
+        if ($maxParallelJobs -gt 8) { $maxParallelJobs = 8 }
 
-        foreach ($video in $videosToProcess) {
+        Write-Host "Parallel Processing: $maxParallelJobs concurrent jobs`n" -ForegroundColor Cyan
+
+        # Thread-safe counters using synchronized hashtable
+        $progressCounters = [hashtable]::Synchronized(@{
+            Processed = 0
+            Failed = 0
+        })
+
+        # Process videos in parallel
+        $videosToProcess | ForEach-Object -ThrottleLimit $maxParallelJobs -Parallel {
+            # Import module in parallel runspace
+            $modulePath = Join-Path -Path $using:PSScriptRoot -ChildPath 'modules\VideoCompressionModule\VideoCompressionModule.psm1'
+            Import-Module $modulePath -Force -WarningAction SilentlyContinue
+
+            # Get video from pipeline
+            $video = $_
+
+            # Import variables from parent scope
+            $tempPath = $using:tempPath
+            $archivePath = $using:archivePath
+            $frameRate = $using:frameRate
+            $videoCodec = $using:videoCodec
+            $timeoutMinutes = $using:timeoutMinutes
+            $durationTolerance = $using:durationTolerance
+            $illegalCharStrategy = $using:illegalCharStrategy
+            $illegalCharReplacement = $using:illegalCharReplacement
+            $DryRun = $using:DryRun
+            $counters = $using:progressCounters
+
             try {
                 Write-Host "`n----------------------------------------" -ForegroundColor Cyan
                 Write-Host "Processing: $($video.filename)" -ForegroundColor Cyan
@@ -445,7 +505,7 @@ if ($Phase -in @('Process', 'Both')) {
 
                 if ($DryRun) {
                     Write-Host "[DRY RUN] Would process this video" -ForegroundColor Magenta
-                    continue
+                    return
                 }
 
                 # Temp file paths
@@ -593,7 +653,8 @@ if ($Phase -in @('Process', 'Both')) {
                 Write-Host "Compression ratio: $($compressionResult.CompressionRatio)" -ForegroundColor Green
                 Write-Host "Space saved: $([math]::Round(($video.original_size - $compressionResult.OutputSize) / 1MB, 2)) MB" -ForegroundColor Green
 
-                $processedCount++
+                # Thread-safe counter increment
+                $counters.Processed++
             }
             catch {
                 Write-SPVidCompLog -Message "Failed to process video $($video.filename): $_" -Level 'Error'
@@ -614,22 +675,28 @@ if ($Phase -in @('Process', 'Both')) {
                     Remove-Item -LiteralPath $tempCompressed -Force -ErrorAction SilentlyContinue
                 }
 
-                $failedCount++
+                # Thread-safe counter increment
+                $counters.Failed++
 
                 # Send error notification if configured
-                $emailEnabled = [bool]::Parse((Get-ConfigValue -Key 'email_enabled'))
-                $sendOnError = [bool]::Parse((Get-ConfigValue -Key 'email_send_on_error'))
-
-                if ($emailEnabled -and $sendOnError) {
+                try {
                     $errorBody = Build-ErrorReport -ErrorMessage $_.Exception.Message `
                         -VideoFilename $video.filename -SharePointUrl $video.sharepoint_url
                     Send-SPVidCompNotification -Subject "Video Compression Error: $($video.filename)" `
                         -Body $errorBody -IsHtml $true
                 }
+                catch {
+                    # Silently ignore email errors in parallel execution
+                    Write-Host "Warning: Failed to send error notification" -ForegroundColor Yellow
+                }
             }
         }
 
-        Show-Header "PROCESSING COMPLETE"
+        # Get final counts from thread-safe counters
+        $processedCount = $progressCounters.Processed
+        $failedCount = $progressCounters.Failed
+
+        Show-SPVidCompHeader "PROCESSING COMPLETE"
         Write-Host "Processed: $processedCount" -ForegroundColor Green
         Write-Host "Failed: $failedCount" -ForegroundColor Red
         Write-Host ""
@@ -644,8 +711,8 @@ if ($Phase -in @('Process', 'Both')) {
         Write-Host "  Average Compression: $($finalStats.AverageCompressionRatio)" -ForegroundColor White
 
         # Send completion notification if configured
-        $emailEnabled = [bool]::Parse((Get-ConfigValue -Key 'email_enabled'))
-        $sendOnCompletion = [bool]::Parse((Get-ConfigValue -Key 'email_send_on_completion'))
+        $emailEnabled = [bool]::Parse((Get-SPVidCompConfigValue -Key 'email_enabled'))
+        $sendOnCompletion = [bool]::Parse((Get-SPVidCompConfigValue -Key 'email_send_on_completion'))
 
         if ($emailEnabled -and $sendOnCompletion) {
             Write-Host "`nSending completion notification..." -ForegroundColor Yellow
