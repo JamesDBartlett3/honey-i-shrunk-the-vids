@@ -43,7 +43,7 @@ AfterAll {
 Describe 'FFmpeg Availability Integration' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         Initialize-Logger -LogPath $Script:TestLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
     }
 
@@ -51,9 +51,9 @@ Describe 'FFmpeg Availability Integration' {
         Remove-TestDatabase -Path $Script:TestDbPath
     }
 
-    Context 'Test-SPVidComp-FFmpegAvailability function' {
+    Context 'Test-SPVidCompFFmpegAvailability function' {
         It 'Should return a result with all required properties' {
-            $result = Test-SPVidComp-FFmpegAvailability
+            $result = Test-SPVidCompFFmpegAvailability
 
             $result | Should -Not -BeNullOrEmpty
             $result.ContainsKey('FFmpegAvailable') | Should -BeTrue
@@ -63,7 +63,7 @@ Describe 'FFmpeg Availability Integration' {
         }
 
         It 'Should return detailed info when -Detailed switch is used' {
-            $result = Test-SPVidComp-FFmpegAvailability -Detailed
+            $result = Test-SPVidCompFFmpegAvailability -Detailed
 
             $result.ContainsKey('FFmpegVersion') | Should -BeTrue
             $result.ContainsKey('FFprobeVersion') | Should -BeTrue
@@ -76,7 +76,7 @@ Describe 'FFmpeg Availability Integration' {
             # Re-initialize logger to ensure fresh log file
             Initialize-Logger -LogPath $Script:TestLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
 
-            $null = Test-SPVidComp-FFmpegAvailability
+            $null = Test-SPVidCompFFmpegAvailability
 
             # Wait a moment for file system
             Start-Sleep -Milliseconds 100
@@ -93,7 +93,7 @@ Describe 'FFmpeg Availability Integration' {
 
     Context 'FFmpeg availability affects compression workflow' {
         It 'Should be checkable before starting compression' {
-            $availability = Test-SPVidComp-FFmpegAvailability
+            $availability = Test-SPVidCompFFmpegAvailability
 
             # The result should provide enough information to decide whether to proceed
             $availability.AllAvailable | Should -BeOfType [bool]
@@ -112,7 +112,7 @@ Describe 'FFmpeg Availability Integration' {
 Describe 'Configuration Affects System Behavior' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
     }
 
     AfterAll {
@@ -129,7 +129,7 @@ Describe 'Configuration Affects System Behavior' {
             Initialize-Logger -LogPath $testLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
 
             # Write a debug message
-            Write-SPVidComp-Log -Message 'Debug level test message' -Level 'Debug'
+            Write-SPVidCompLog -Message 'Debug level test message' -Level 'Debug'
             Start-Sleep -Milliseconds 100
 
             $logFiles = Get-ChildItem -Path $testLogDir -Filter '*.log'
@@ -140,10 +140,10 @@ Describe 'Configuration Affects System Behavior' {
             Initialize-Logger -LogPath $testLogDir -LogLevel 'Error' -ConsoleOutput $false -FileOutput $true
 
             # Write another debug message - should NOT appear
-            Write-SPVidComp-Log -Message 'This debug should be filtered' -Level 'Debug'
+            Write-SPVidCompLog -Message 'This debug should be filtered' -Level 'Debug'
 
             # Write an error message - should appear
-            Write-SPVidComp-Log -Message 'This error should appear' -Level 'Error'
+            Write-SPVidCompLog -Message 'This error should appear' -Level 'Error'
             Start-Sleep -Milliseconds 100
 
             $logContent = Get-Content -Path $logFiles[0].FullName -Raw
@@ -167,7 +167,7 @@ Describe 'Configuration Affects System Behavior' {
 
             # Initialize logger to first path
             Initialize-Logger -LogPath $logDir1 -LogLevel 'Info' -ConsoleOutput $false -FileOutput $true
-            Write-SPVidComp-Log -Message 'Message in path 1' -Level 'Info'
+            Write-SPVidCompLog -Message 'Message in path 1' -Level 'Info'
             Start-Sleep -Milliseconds 100
 
             # Verify log file in first path
@@ -176,7 +176,7 @@ Describe 'Configuration Affects System Behavior' {
 
             # Change to second path
             Initialize-Logger -LogPath $logDir2 -LogLevel 'Info' -ConsoleOutput $false -FileOutput $true
-            Write-SPVidComp-Log -Message 'Message in path 2' -Level 'Info'
+            Write-SPVidCompLog -Message 'Message in path 2' -Level 'Info'
             Start-Sleep -Milliseconds 100
 
             # Verify log file in second path
@@ -210,7 +210,7 @@ Describe 'Configuration Affects System Behavior' {
                 To = @('recipient@test.com')
             }
 
-            $result = Send-SPVidComp-Notification -Subject 'Test' -Body 'Test body'
+            $result = Send-SPVidCompNotification -Subject 'Test' -Body 'Test body'
 
             $result | Should -BeFalse
         }
@@ -224,7 +224,7 @@ Describe 'Configuration Affects System Behavior' {
                 To = @('recipient@test.com')
             }
 
-            $resultDisabled = Send-SPVidComp-Notification -Subject 'Test' -Body 'Body'
+            $resultDisabled = Send-SPVidCompNotification -Subject 'Test' -Body 'Body'
             $resultDisabled | Should -BeFalse
 
             # Now enable email (will still fail due to no MailKit, but flow is different)
@@ -242,7 +242,7 @@ Describe 'Configuration Affects System Behavior' {
 
             # This should attempt to send (and fail for a different reason - MailKit not available)
             # The key is that it tries when enabled vs returns immediately when disabled
-            $resultEnabled = Send-SPVidComp-Notification -Subject 'Test' -Body 'Body'
+            $resultEnabled = Send-SPVidCompNotification -Subject 'Test' -Body 'Body'
             $resultEnabled | Should -BeFalse  # Still false, but took different code path
         }
     }
@@ -257,10 +257,10 @@ Describe 'Configuration Affects System Behavior' {
                 'paths_temp_download' = '/tmp/videos'
             }
 
-            Set-SPVidComp-Config -ConfigValues $configValues
+            Set-SPVidCompConfig -ConfigValues $configValues
 
             # Retrieve and verify
-            $retrieved = Get-SPVidComp-Config
+            $retrieved = Get-SPVidCompConfig
 
             $retrieved['logging_log_level'] | Should -Be 'Debug'
             $retrieved['email_enabled'] | Should -Be 'true'
@@ -273,12 +273,12 @@ Describe 'Configuration Affects System Behavior' {
                 'test_persistence_key' = 'persistence_value'
             }
 
-            Set-SPVidComp-Config -ConfigValues $configValues
+            Set-SPVidCompConfig -ConfigValues $configValues
 
             # Reinitialize catalog (simulates restart)
-            Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+            Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
-            $retrieved = Get-SPVidComp-Config
+            $retrieved = Get-SPVidCompConfig
             $retrieved['test_persistence_key'] | Should -Be 'persistence_value'
         }
     }
@@ -290,7 +290,7 @@ Describe 'Configuration Affects System Behavior' {
 Describe 'Email Notification Triggers' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         Initialize-Logger -LogPath $Script:TestLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
 
         # Track email send attempts
@@ -312,7 +312,7 @@ Describe 'Email Notification Triggers' {
 
             foreach ($v in $videos) {
                 $record = Get-TestVideoRecord -Filename $v.Filename -Size $v.OriginalSize
-                Add-SPVidComp-Video @record
+                Add-SPVidCompVideo @record
 
                 $id = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT id FROM videos WHERE filename = '$($v.Filename)'").id
 
@@ -328,10 +328,10 @@ Describe 'Email Notification Triggers' {
             }
 
             # Get actual statistics
-            $stats = Get-SPVidComp-Statistics
+            $stats = Get-SPVidCompStatistics
 
             # Get failed videos
-            $failedVideos = Get-SPVidComp-Videos -Status 'Failed'
+            $failedVideos = Get-SPVidCompVideos -Status 'Failed'
 
             # Build completion report using real data
             $report = Build-CompletionReport -Statistics $stats -FailedVideos $failedVideos
@@ -342,7 +342,7 @@ Describe 'Email Notification Triggers' {
         }
 
         It 'Should generate valid error report for failed video' {
-            $video = Get-SPVidComp-Videos -Status 'Failed' | Select-Object -First 1
+            $video = Get-SPVidCompVideos -Status 'Failed' | Select-Object -First 1
 
             $report = Build-ErrorReport -ErrorMessage 'Compression failed' -VideoFilename $video.filename -SharePointUrl $video.sharepoint_url
 
@@ -378,11 +378,11 @@ Describe 'Email Notification Triggers' {
             Mock -ModuleName VideoCompressionModule Send-EmailViaMailKit { return $true }
 
             # Build real report from stats
-            $stats = Get-SPVidComp-Statistics
+            $stats = Get-SPVidCompStatistics
             $report = Build-CompletionReport -Statistics $stats
 
             # Send notification
-            $result = Send-SPVidComp-Notification -Subject 'Processing Complete' -Body $report -IsHtml $true
+            $result = Send-SPVidCompNotification -Subject 'Processing Complete' -Body $report -IsHtml $true
 
             # Verify send was attempted
             Should -Invoke -ModuleName VideoCompressionModule -CommandName Send-EmailViaMailKit -Times 1
@@ -404,7 +404,7 @@ Describe 'Email Notification Triggers' {
             # Mock to simulate failure
             Mock -ModuleName VideoCompressionModule Send-EmailViaMailKit { return $false }
 
-            $null = Send-SPVidComp-Notification -Subject 'Test' -Body 'Body'
+            $null = Send-SPVidCompNotification -Subject 'Test' -Body 'Body'
             Start-Sleep -Milliseconds 100
 
             # Check logs captured the email attempt
@@ -429,7 +429,7 @@ Describe 'Full End-to-End Workflow' {
         $Script:WorkflowLogDir = Join-Path -Path $Script:TestTempDir -ChildPath "workflow-logs-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:WorkflowLogDir -Force | Out-Null
 
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         Initialize-Logger -LogPath $Script:WorkflowLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
 
         # Initialize email config (disabled for this test to avoid side effects)
@@ -453,11 +453,11 @@ Describe 'Full End-to-End Workflow' {
         It 'Step 1: Should catalog a new video' {
             $record = Get-TestVideoRecord -Filename 'workflow-test.mp4' -Size 1024000
 
-            $result = Add-SPVidComp-Video @record
+            $result = Add-SPVidCompVideo @record
 
             $result | Should -BeTrue
 
-            $videos = Get-SPVidComp-Videos -Status 'Cataloged'
+            $videos = Get-SPVidCompVideos -Status 'Cataloged'
             $videos.Count | Should -BeGreaterThan 0
             $video = $videos | Where-Object { $_.filename -eq 'workflow-test.mp4' }
             $video | Should -Not -BeNullOrEmpty
@@ -466,9 +466,9 @@ Describe 'Full End-to-End Workflow' {
         }
 
         It 'Step 2: Should update status to Downloading and set timestamp' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Downloading'
+            Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Downloading'
 
-            $video = (Get-SPVidComp-Videos -Status 'Downloading') | Where-Object { $_.id -eq $Script:TestVideoId }
+            $video = (Get-SPVidCompVideos -Status 'Downloading') | Where-Object { $_.id -eq $Script:TestVideoId }
             $video.status | Should -Be 'Downloading'
             $video.processing_started | Should -Not -BeNullOrEmpty
         }
@@ -476,51 +476,51 @@ Describe 'Full End-to-End Workflow' {
         It 'Step 3: Should archive the video with hash verification' {
             $archivePath = Join-Path -Path $Script:TestArchiveDir -ChildPath 'TestSite\Documents\Videos\workflow-test.mp4'
 
-            $result = Copy-SPVidComp-Archive -SourcePath $Script:SourceVideo -ArchivePath $archivePath
+            $result = Copy-SPVidCompArchive -SourcePath $Script:SourceVideo -ArchivePath $archivePath
 
             $result.Success | Should -BeTrue
             $result.SourceHash | Should -Be $result.DestinationHash
             Test-Path -LiteralPath $archivePath | Should -BeTrue
 
             # Update status
-            Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Archiving' -AdditionalFields @{
+            Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Archiving' -AdditionalFields @{
                 archive_path = $archivePath
             }
 
-            $video = (Get-SPVidComp-Videos -Status 'Archiving') | Where-Object { $_.id -eq $Script:TestVideoId }
+            $video = (Get-SPVidCompVideos -Status 'Archiving') | Where-Object { $_.id -eq $Script:TestVideoId }
             $video.archive_path | Should -Be $archivePath
         }
 
         It 'Step 4: Should verify archive integrity' {
             $archivePath = Join-Path -Path $Script:TestArchiveDir -ChildPath 'TestSite\Documents\Videos\workflow-test.mp4'
 
-            $integrityResult = Test-SPVidComp-ArchiveIntegrity -SourcePath $Script:SourceVideo -DestinationPath $archivePath
+            $integrityResult = Test-SPVidCompArchiveIntegrity -SourcePath $Script:SourceVideo -DestinationPath $archivePath
 
             $integrityResult.Success | Should -BeTrue
             $integrityResult.SourceHash | Should -Be $integrityResult.DestinationHash
         }
 
         It 'Step 5: Should progress through compression status' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Compressing'
+            Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Compressing'
 
-            $video = (Get-SPVidComp-Videos -Status 'Compressing') | Where-Object { $_.id -eq $Script:TestVideoId }
+            $video = (Get-SPVidCompVideos -Status 'Compressing') | Where-Object { $_.id -eq $Script:TestVideoId }
             $video.status | Should -Be 'Compressing'
         }
 
         It 'Step 6: Should update with compression results' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Verifying' -AdditionalFields @{
+            Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Verifying' -AdditionalFields @{
                 compressed_size = 256000
                 compression_ratio = 0.5
             }
 
-            $video = (Get-SPVidComp-Videos -Status 'Verifying') | Where-Object { $_.id -eq $Script:TestVideoId }
+            $video = (Get-SPVidCompVideos -Status 'Verifying') | Where-Object { $_.id -eq $Script:TestVideoId }
             $video.compressed_size | Should -Be 256000
         }
 
         It 'Step 7: Should complete the workflow' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Completed'
+            Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Completed'
 
-            $video = (Get-SPVidComp-Videos -Status 'Completed') | Where-Object { $_.id -eq $Script:TestVideoId }
+            $video = (Get-SPVidCompVideos -Status 'Completed') | Where-Object { $_.id -eq $Script:TestVideoId }
             $video.status | Should -Be 'Completed'
             $video.processing_completed | Should -Not -BeNullOrEmpty
         }
@@ -538,7 +538,7 @@ Describe 'Full End-to-End Workflow' {
         }
 
         It 'Step 9: Statistics should reflect the completed workflow' {
-            $stats = Get-SPVidComp-Statistics
+            $stats = Get-SPVidCompStatistics
 
             $stats.TotalCataloged | Should -BeGreaterThan 0
 
@@ -551,25 +551,25 @@ Describe 'Full End-to-End Workflow' {
         BeforeAll {
             # Add a new video for error testing
             $record = Get-TestVideoRecord -Filename 'error-workflow-test.mp4' -Size 2048000
-            Add-SPVidComp-Video @record
+            Add-SPVidCompVideo @record
 
-            $Script:ErrorTestVideo = (Get-SPVidComp-Videos -Status 'Cataloged') | Where-Object { $_.filename -eq 'error-workflow-test.mp4' }
+            $Script:ErrorTestVideo = (Get-SPVidCompVideos -Status 'Cataloged') | Where-Object { $_.filename -eq 'error-workflow-test.mp4' }
         }
 
         It 'Should handle failure and store error details' {
-            Update-SPVidComp-Status -VideoId $Script:ErrorTestVideo.id -Status 'Downloading'
-            Update-SPVidComp-Status -VideoId $Script:ErrorTestVideo.id -Status 'Failed' -AdditionalFields @{
+            Update-SPVidCompStatus -VideoId $Script:ErrorTestVideo.id -Status 'Downloading'
+            Update-SPVidCompStatus -VideoId $Script:ErrorTestVideo.id -Status 'Failed' -AdditionalFields @{
                 last_error = 'Connection timeout after 30 seconds'
                 retry_count = 1
             }
 
-            $video = (Get-SPVidComp-Videos -Status 'Failed') | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
+            $video = (Get-SPVidCompVideos -Status 'Failed') | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
             $video.last_error | Should -Be 'Connection timeout after 30 seconds'
             $video.retry_count | Should -Be 1
         }
 
         It 'Should generate error report for failed video' {
-            $failedVideo = (Get-SPVidComp-Videos -Status 'Failed') | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
+            $failedVideo = (Get-SPVidCompVideos -Status 'Failed') | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
 
             $errorReport = Build-ErrorReport -ErrorMessage $failedVideo.last_error -VideoFilename $failedVideo.filename -SharePointUrl $failedVideo.sharepoint_url
 
@@ -578,22 +578,22 @@ Describe 'Full End-to-End Workflow' {
         }
 
         It 'Should be retriable and update retry count' {
-            Update-SPVidComp-Status -VideoId $Script:ErrorTestVideo.id -Status 'Cataloged' -AdditionalFields @{
+            Update-SPVidCompStatus -VideoId $Script:ErrorTestVideo.id -Status 'Cataloged' -AdditionalFields @{
                 retry_count = 2
             }
 
-            Update-SPVidComp-Status -VideoId $Script:ErrorTestVideo.id -Status 'Downloading'
-            Update-SPVidComp-Status -VideoId $Script:ErrorTestVideo.id -Status 'Failed' -AdditionalFields @{
+            Update-SPVidCompStatus -VideoId $Script:ErrorTestVideo.id -Status 'Downloading'
+            Update-SPVidCompStatus -VideoId $Script:ErrorTestVideo.id -Status 'Failed' -AdditionalFields @{
                 last_error = 'Second failure'
                 retry_count = 3
             }
 
-            $video = (Get-SPVidComp-Videos -Status 'Failed') | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
+            $video = (Get-SPVidCompVideos -Status 'Failed') | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
             $video.retry_count | Should -Be 3
         }
 
         It 'Should be excluded when retry count exceeds max' {
-            $videosUnderLimit = Get-SPVidComp-Videos -Status 'Failed' -MaxRetryCount 2
+            $videosUnderLimit = Get-SPVidCompVideos -Status 'Failed' -MaxRetryCount 2
 
             $excluded = $videosUnderLimit | Where-Object { $_.id -eq $Script:ErrorTestVideo.id }
             $excluded | Should -BeNullOrEmpty
@@ -610,7 +610,7 @@ Describe 'Database and Logging Integration' {
         $Script:IntegrationLogDir = Join-Path -Path $Script:TestTempDir -ChildPath "db-log-integration-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:IntegrationLogDir -Force | Out-Null
 
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         Initialize-Logger -LogPath $Script:IntegrationLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
     }
 
@@ -623,7 +623,7 @@ Describe 'Database and Logging Integration' {
 
     It 'Should log when videos are added to the catalog' {
         $record = Get-TestVideoRecord -Filename 'logging-integration-test.mp4'
-        Add-SPVidComp-Video @record
+        Add-SPVidCompVideo @record
 
         Start-Sleep -Milliseconds 100
 
@@ -632,16 +632,16 @@ Describe 'Database and Logging Integration' {
     }
 
     It 'Should log when video status changes' {
-        $video = (Get-SPVidComp-Videos -Status 'Cataloged') | Select-Object -First 1
+        $video = (Get-SPVidCompVideos -Status 'Cataloged') | Select-Object -First 1
 
         if (-not $video) {
             # Add a video if none exist
             $record = Get-TestVideoRecord -Filename "status-change-log-test-$(Get-Random).mp4"
-            Add-SPVidComp-Video @record
-            $video = (Get-SPVidComp-Videos -Status 'Cataloged') | Select-Object -First 1
+            Add-SPVidCompVideo @record
+            $video = (Get-SPVidCompVideos -Status 'Cataloged') | Select-Object -First 1
         }
 
-        Update-SPVidComp-Status -VideoId $video.id -Status 'Downloading'
+        Update-SPVidCompStatus -VideoId $video.id -Status 'Downloading'
 
         Start-Sleep -Milliseconds 100
 
@@ -660,7 +660,7 @@ Describe 'Database and Logging Integration' {
         Initialize-Logger -LogPath $newLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
 
         $newDbPath = New-TestDatabase -Path (Join-Path -Path $Script:TestTempDir -ChildPath "init-test-$(Get-Random).db")
-        Initialize-SPVidComp-Catalog -DatabasePath $newDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $newDbPath
 
         Start-Sleep -Milliseconds 100
 
@@ -688,7 +688,7 @@ Describe 'Disk Space Integration' {
         It 'Should handle non-existent temp directory path' {
             $nonExistentPath = Join-Path -Path $Script:TestTempDir -ChildPath "non-existent-$(Get-Random)\deeply\nested\path"
 
-            $result = Test-SPVidComp-DiskSpace -Path $nonExistentPath -RequiredBytes 1024
+            $result = Test-SPVidCompDiskSpace -Path $nonExistentPath -RequiredBytes 1024
 
             $result | Should -Not -BeNullOrEmpty
             $result.ContainsKey('HasSpace') | Should -BeTrue
@@ -701,7 +701,7 @@ Describe 'Disk Space Integration' {
             # Path should not exist initially
             Test-Path -LiteralPath $testPath | Should -BeFalse
 
-            $result = Test-SPVidComp-DiskSpace -Path $testPath -RequiredBytes 1024
+            $result = Test-SPVidCompDiskSpace -Path $testPath -RequiredBytes 1024
 
             $result.HasSpace | Should -BeOfType [bool]
             $result.FreeSpace | Should -BeGreaterThan 0
@@ -713,7 +713,7 @@ Describe 'Disk Space Integration' {
             $path = $Script:TestTempDir
 
             # Request impossibly large space (100 TB)
-            $result = Test-SPVidComp-DiskSpace -Path $path -RequiredBytes (100TB)
+            $result = Test-SPVidCompDiskSpace -Path $path -RequiredBytes (100TB)
 
             $result.HasSpace | Should -BeFalse
         }
@@ -722,7 +722,7 @@ Describe 'Disk Space Integration' {
             $path = $Script:TestTempDir
 
             # Request tiny amount (1 KB)
-            $result = Test-SPVidComp-DiskSpace -Path $path -RequiredBytes 1024
+            $result = Test-SPVidCompDiskSpace -Path $path -RequiredBytes 1024
 
             $result.HasSpace | Should -BeTrue
             $result.FreeSpace | Should -BeGreaterThan 1024
@@ -736,11 +736,11 @@ Describe 'Disk Space Integration' {
 Describe 'Filename Sanitization Workflow Integration' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         Initialize-Logger -LogPath $Script:TestLogDir -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
 
         # Get the actual illegal characters for this platform
-        $Script:IllegalChars = Get-SPVidComp-IllegalCharacters
+        $Script:IllegalChars = Get-SPVidCompIllegalCharacters
     }
 
     AfterAll {
@@ -751,7 +751,7 @@ Describe 'Filename Sanitization Workflow Integration' {
         # Null character is universally invalid across all platforms
         $illegalFilename = "video`0name.mp4"
 
-        $sanitizeResult = Repair-SPVidComp-Filename -Filename $illegalFilename -Strategy 'Replace' -ReplacementChar '_'
+        $sanitizeResult = Repair-SPVidCompFilename -Filename $illegalFilename -Strategy 'Replace' -ReplacementChar '_'
 
         $sanitizeResult.Success | Should -BeTrue
         $sanitizeResult.Changed | Should -BeTrue
@@ -761,7 +761,7 @@ Describe 'Filename Sanitization Workflow Integration' {
     It 'Should integrate filename check into validation flow' {
         $testFilename = "test-file.mp4"
 
-        $checkResult = Test-SPVidComp-FilenameCharacters -Filename $testFilename
+        $checkResult = Test-SPVidCompFilenameCharacters -Filename $testFilename
 
         $checkResult.IsValid | Should -BeTrue
         $checkResult.OriginalFilename | Should -Be $testFilename
@@ -771,14 +771,14 @@ Describe 'Filename Sanitization Workflow Integration' {
         # Use null character which is always illegal
         $illegalFilename = "file`0name.mp4"
 
-        $checkResult = Test-SPVidComp-FilenameCharacters -Filename $illegalFilename
+        $checkResult = Test-SPVidCompFilenameCharacters -Filename $illegalFilename
 
         $checkResult.IsValid | Should -BeFalse
         $checkResult.IllegalCharacters.Count | Should -BeGreaterThan 0
     }
 
     It 'Should return list of platform-specific illegal characters' {
-        $illegalChars = Get-SPVidComp-IllegalCharacters
+        $illegalChars = Get-SPVidCompIllegalCharacters
 
         $illegalChars | Should -Not -BeNullOrEmpty
         $illegalChars.Count | Should -BeGreaterThan 0

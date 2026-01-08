@@ -112,7 +112,59 @@ CREATE TABLE IF NOT EXISTS processing_log (
 
         Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $processingLogQuery
 
-        # Create metadata table
+        # Create config table (single-row table with typed columns)
+        $configQuery = @"
+CREATE TABLE IF NOT EXISTS config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    -- SharePoint settings
+    sharepoint_site_url TEXT NOT NULL,
+    sharepoint_library_name TEXT NOT NULL,
+    sharepoint_folder_path TEXT,
+    sharepoint_recursive INTEGER NOT NULL DEFAULT 1,
+    -- Path settings
+    paths_temp_download TEXT NOT NULL,
+    paths_external_archive TEXT NOT NULL,
+    paths_log TEXT NOT NULL,
+    -- Compression settings
+    compression_frame_rate INTEGER NOT NULL DEFAULT 10,
+    compression_video_codec TEXT NOT NULL DEFAULT 'libx265',
+    compression_timeout_minutes INTEGER NOT NULL DEFAULT 60,
+    -- Processing settings
+    processing_retry_attempts INTEGER NOT NULL DEFAULT 3,
+    processing_required_disk_space_gb INTEGER NOT NULL DEFAULT 50,
+    processing_duration_tolerance_seconds INTEGER NOT NULL DEFAULT 1,
+    -- Resume settings
+    resume_enable INTEGER NOT NULL DEFAULT 1,
+    resume_skip_processed INTEGER NOT NULL DEFAULT 1,
+    resume_reprocess_failed INTEGER NOT NULL DEFAULT 1,
+    -- Email settings
+    email_enabled INTEGER NOT NULL DEFAULT 0,
+    email_smtp_server TEXT,
+    email_smtp_port INTEGER DEFAULT 587,
+    email_use_ssl INTEGER DEFAULT 1,
+    email_from TEXT,
+    email_to TEXT,
+    email_send_on_completion INTEGER DEFAULT 1,
+    email_send_on_error INTEGER DEFAULT 1,
+    -- Logging settings
+    logging_log_level TEXT NOT NULL DEFAULT 'Info',
+    logging_console_output INTEGER NOT NULL DEFAULT 0,
+    logging_file_output INTEGER NOT NULL DEFAULT 1,
+    logging_max_log_size_mb INTEGER NOT NULL DEFAULT 100,
+    logging_log_retention_days INTEGER NOT NULL DEFAULT 30,
+    -- Advanced settings
+    advanced_cleanup_temp_files INTEGER NOT NULL DEFAULT 1,
+    advanced_verify_checksums INTEGER NOT NULL DEFAULT 1,
+    advanced_dry_run INTEGER NOT NULL DEFAULT 0,
+    -- Illegal character handling
+    illegal_char_strategy TEXT NOT NULL DEFAULT 'Replace',
+    illegal_char_replacement TEXT DEFAULT '_'
+);
+"@
+
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $configQuery
+
+        # Create metadata table (for runtime metadata like last_catalog_run, etc.)
         $metadataQuery = @"
 CREATE TABLE IF NOT EXISTS metadata (
     key TEXT PRIMARY KEY,
@@ -265,7 +317,7 @@ function Update-VideoStatus {
             $updateFields += "processing_started = @processing_started"
             $parameters['processing_started'] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         }
-        elseif ($Status -eq 'Completed' -or $Status -eq 'Failed') {
+        elseif ($Status -in @('Completed', 'Failed')) {
             $updateFields += "processing_completed = @processing_completed"
             $parameters['processing_completed'] = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         }
@@ -435,90 +487,126 @@ function Get-Metadata {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Set-ConfigValue
-# Purpose: Store configuration value in database
+# Function: Set-Config (Internal)
+# Purpose: Store complete configuration in database
 #------------------------------------------------------------------------------------------------------------------
-function Set-ConfigValue {
+function Set-Config {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Key,
-
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyString()]
-        [string]$Value
+        [hashtable]$ConfigValues
     )
 
     try {
-        $configKey = "config_$Key"
-        Set-Metadata -Key $configKey -Value $Value
+        # Convert string booleans to integers for database
+        $boolFields = @(
+            'sharepoint_recursive', 'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
+            'email_enabled', 'email_use_ssl', 'email_send_on_completion', 'email_send_on_error',
+            'logging_console_output', 'logging_file_output',
+            'advanced_cleanup_temp_files', 'advanced_verify_checksums', 'advanced_dry_run'
+        )
+
+        foreach ($field in $boolFields) {
+            if ($ConfigValues.ContainsKey($field)) {
+                $value = $ConfigValues[$field]
+                if ($value -is [string]) {
+                    $ConfigValues[$field] = if ($value -in @('True', 'true', '1')) { 1 } else { 0 }
+                } elseif ($value -is [bool]) {
+                    $ConfigValues[$field] = if ($value) { 1 } else { 0 }
+                }
+            }
+        }
+
+        # Check if config already exists
+        $existsQuery = "SELECT COUNT(*) as count FROM config WHERE id = 1;"
+        $result = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $existsQuery
+        $exists = ($result.count -gt 0)
+
+        if ($exists) {
+            # Build UPDATE statement dynamically
+            $setClauses = @()
+            $parameters = @{ id = 1 }
+
+            foreach ($key in $ConfigValues.Keys) {
+                $setClauses += "$key = @$key"
+                $parameters[$key] = $ConfigValues[$key]
+            }
+
+            $setClause = $setClauses -join ', '
+            $query = "UPDATE config SET $setClause WHERE id = @id;"
+        }
+        else {
+            # Build INSERT statement
+            $ConfigValues['id'] = 1
+            $columns = $ConfigValues.Keys -join ', '
+            $placeholders = ($ConfigValues.Keys | ForEach-Object { "@$_" }) -join ', '
+            $query = "INSERT INTO config ($columns) VALUES ($placeholders);"
+            $parameters = $ConfigValues
+        }
+
+        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
+        Write-LogEntry -Message "Configuration saved successfully" -Level 'Debug'
         return $true
     }
     catch {
-        Write-LogEntry -Message "Failed to set config value '$Key': $_" -Level 'Warning'
+        Write-LogEntry -Message "Failed to save configuration: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-ConfigValue
-# Purpose: Retrieve configuration value from database
-#------------------------------------------------------------------------------------------------------------------
-function Get-ConfigValue {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Key,
-
-        [Parameter(Mandatory = $false)]
-        [string]$DefaultValue = ''
-    )
-
-    try {
-        $configKey = "config_$Key"
-        $value = Get-Metadata -Key $configKey
-
-        if ($null -eq $value) {
-            return $DefaultValue
-        }
-
-        return $value
-    }
-    catch {
-        Write-LogEntry -Message "Failed to get config value '$Key': $_" -Level 'Warning'
-        return $DefaultValue
-    }
-}
-
-#------------------------------------------------------------------------------------------------------------------
-# Function: Get-AllConfig
-# Purpose: Retrieve all configuration values from database
+# Function: Get-AllConfig (Internal)
+# Purpose: Retrieve all configuration values from database with proper types
 #------------------------------------------------------------------------------------------------------------------
 function Get-AllConfig {
     [CmdletBinding()]
     param()
 
     try {
-        $query = "SELECT key, value FROM metadata WHERE key LIKE 'config_%';"
-        $results = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query
+        $query = "SELECT * FROM config WHERE id = 1;"
+        $result = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query
 
+        if ($null -eq $result -or $result.Count -eq 0) {
+            return @{}
+        }
+
+        # Convert result to hashtable with proper types
         $config = @{}
-        foreach ($row in $results) {
-            # Remove 'config_' prefix
-            $key = $row.key -replace '^config_', ''
-            $config[$key] = $row.value
+        $row = $result[0]
+
+        # Get all column names (excluding 'id')
+        $properties = $row.PSObject.Properties | Where-Object { $_.Name -ne 'id' }
+
+        foreach ($prop in $properties) {
+            $name = $prop.Name
+            $value = $prop.Value
+
+            # Convert INTEGER booleans (0/1) back to strings for compatibility
+            $boolFields = @(
+                'sharepoint_recursive', 'resume_enable', 'resume_skip_processed', 'resume_reprocess_failed',
+                'email_enabled', 'email_use_ssl', 'email_send_on_completion', 'email_send_on_error',
+                'logging_console_output', 'logging_file_output',
+                'advanced_cleanup_temp_files', 'advanced_verify_checksums', 'advanced_dry_run'
+            )
+
+            if ($name -in $boolFields) {
+                $config[$name] = if ($value -eq 1) { 'True' } else { 'False' }
+            }
+            else {
+                $config[$name] = $value
+            }
         }
 
         return $config
     }
     catch {
-        Write-LogEntry -Message "Failed to retrieve all config: $_" -Level 'Warning'
+        Write-LogEntry -Message "Failed to retrieve configuration: $_" -Level 'Error'
         return @{}
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-ConfigExists
+# Function: Test-ConfigExists (Internal)
 # Purpose: Check if configuration exists in database
 #------------------------------------------------------------------------------------------------------------------
 function Test-ConfigExists {
@@ -526,7 +614,7 @@ function Test-ConfigExists {
     param()
 
     try {
-        $query = "SELECT COUNT(*) as count FROM metadata WHERE key LIKE 'config_%';"
+        $query = "SELECT COUNT(*) as count FROM config WHERE id = 1;"
         $result = Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query
 
         return ($result.count -gt 0)
@@ -537,32 +625,7 @@ function Test-ConfigExists {
     }
 }
 
-#------------------------------------------------------------------------------------------------------------------
-# Function: Remove-ConfigValue
-# Purpose: Remove configuration value from database
-#------------------------------------------------------------------------------------------------------------------
-function Remove-ConfigValue {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Key
-    )
-
-    try {
-        $configKey = "config_$Key"
-        $query = "DELETE FROM metadata WHERE key = @key;"
-        $parameters = @{ key = $configKey }
-
-        Invoke-SqliteQuery -DataSource $Script:DatabasePath -Query $query -SqlParameters $parameters
-        return $true
-    }
-    catch {
-        Write-LogEntry -Message "Failed to remove config value '$Key': $_" -Level 'Warning'
-        return $false
-    }
-}
-
 # Export functions
 Export-ModuleMember -Function Initialize-Database, Add-VideoToDatabase, Get-VideosFromDatabase, `
     Update-VideoStatus, Add-ProcessingLogEntry, Get-DatabaseStatistics, Set-Metadata, Get-Metadata, `
-    Set-ConfigValue, Get-ConfigValue, Get-AllConfig, Test-ConfigExists, Remove-ConfigValue
+    Set-Config, Get-AllConfig, Test-ConfigExists

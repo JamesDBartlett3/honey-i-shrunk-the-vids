@@ -17,7 +17,7 @@ BeforeAll {
 
     # Initialize a test database and logger to prevent errors during tests
     $Script:GlobalTestDbPath = New-TestDatabase
-    Initialize-SPVidComp-Catalog -DatabasePath $Script:GlobalTestDbPath
+    Initialize-SPVidCompCatalog -DatabasePath $Script:GlobalTestDbPath
 
     $Script:GlobalTestLogPath = New-TestLogDirectory
     Initialize-Logger -LogPath $Script:GlobalTestLogPath -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
@@ -31,36 +31,36 @@ AfterAll {
 #------------------------------------------------------------------------------------------------------------------
 # Platform Detection Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Get-SPVidComp-PlatformDefaults' {
+Describe 'Get-SPVidCompPlatformDefaults' {
     It 'Should return a hashtable' {
-        $defaults = Get-SPVidComp-PlatformDefaults
+        $defaults = Get-SPVidCompPlatformDefaults
 
         $defaults | Should -BeOfType [hashtable]
     }
 
     It 'Should contain TempPath key' {
-        $defaults = Get-SPVidComp-PlatformDefaults
+        $defaults = Get-SPVidCompPlatformDefaults
 
         $defaults.Keys | Should -Contain 'TempPath'
         $defaults.TempPath | Should -Not -BeNullOrEmpty
     }
 
     It 'Should contain ArchivePath key' {
-        $defaults = Get-SPVidComp-PlatformDefaults
+        $defaults = Get-SPVidCompPlatformDefaults
 
         $defaults.Keys | Should -Contain 'ArchivePath'
         $defaults.ArchivePath | Should -Not -BeNullOrEmpty
     }
 
     It 'Should contain LogPath key' {
-        $defaults = Get-SPVidComp-PlatformDefaults
+        $defaults = Get-SPVidCompPlatformDefaults
 
         $defaults.Keys | Should -Contain 'LogPath'
         $defaults.LogPath | Should -Not -BeNullOrEmpty
     }
 
     It 'Should return platform-appropriate paths' {
-        $defaults = Get-SPVidComp-PlatformDefaults
+        $defaults = Get-SPVidCompPlatformDefaults
 
         if ($IsWindows) {
             $defaults.TempPath | Should -Match '^[A-Z]:\\'
@@ -74,32 +74,32 @@ Describe 'Get-SPVidComp-PlatformDefaults' {
 #------------------------------------------------------------------------------------------------------------------
 # Illegal Character Handling Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Get-SPVidComp-IllegalCharacters' {
+Describe 'Get-SPVidCompIllegalCharacters' {
     It 'Should return an array of characters' {
-        $chars = Get-SPVidComp-IllegalCharacters
+        $chars = Get-SPVidCompIllegalCharacters
 
         $chars | Should -Not -BeNullOrEmpty
         $chars.GetType().IsArray | Should -BeTrue
     }
 
     It 'Should include common illegal characters' {
-        $chars = Get-SPVidComp-IllegalCharacters
+        $chars = Get-SPVidCompIllegalCharacters
 
         # These are illegal on all platforms
         $chars | Should -Contain ([char]0)  # Null character
     }
 
     It 'Should use native .NET method' {
-        $chars = Get-SPVidComp-IllegalCharacters
+        $chars = Get-SPVidCompIllegalCharacters
         $nativeChars = [System.IO.Path]::GetInvalidFileNameChars()
 
         $chars.Count | Should -Be $nativeChars.Count
     }
 }
 
-Describe 'Test-SPVidComp-FilenameCharacters' {
+Describe 'Test-SPVidCompFilenameCharacters' {
     It 'Should return IsValid = true for valid filename' {
-        $result = Test-SPVidComp-FilenameCharacters -Filename 'valid-filename.mp4'
+        $result = Test-SPVidCompFilenameCharacters -Filename 'valid-filename.mp4'
 
         $result.IsValid | Should -BeTrue
         $result.IllegalCharacters.Count | Should -Be 0
@@ -109,7 +109,7 @@ Describe 'Test-SPVidComp-FilenameCharacters' {
         # Use a character we know is illegal (colon on Windows, null everywhere)
         $illegalFilename = "test`0file.mp4"  # Null character
 
-        $result = Test-SPVidComp-FilenameCharacters -Filename $illegalFilename
+        $result = Test-SPVidCompFilenameCharacters -Filename $illegalFilename
 
         $result.IsValid | Should -BeFalse
     }
@@ -117,7 +117,7 @@ Describe 'Test-SPVidComp-FilenameCharacters' {
     It 'Should identify specific illegal characters' {
         $illegalFilename = "test`0file.mp4"
 
-        $result = Test-SPVidComp-FilenameCharacters -Filename $illegalFilename
+        $result = Test-SPVidCompFilenameCharacters -Filename $illegalFilename
 
         $result.IllegalCharacters | Should -Not -BeNullOrEmpty
     }
@@ -125,16 +125,16 @@ Describe 'Test-SPVidComp-FilenameCharacters' {
     It 'Should preserve original filename in result' {
         $filename = 'my-video.mp4'
 
-        $result = Test-SPVidComp-FilenameCharacters -Filename $filename
+        $result = Test-SPVidCompFilenameCharacters -Filename $filename
 
         $result.OriginalFilename | Should -Be $filename
     }
 }
 
-Describe 'Repair-SPVidComp-Filename' {
+Describe 'Repair-SPVidCompFilename' {
     Context 'With valid filename' {
         It 'Should return unchanged filename' {
-            $result = Repair-SPVidComp-Filename -Filename 'valid-file.mp4'
+            $result = Repair-SPVidCompFilename -Filename 'valid-file.mp4'
 
             $result.Success | Should -BeTrue
             $result.Changed | Should -BeFalse
@@ -147,7 +147,7 @@ Describe 'Repair-SPVidComp-Filename' {
             # Create filename with null character
             $illegalFilename = "test`0file.mp4"
 
-            $result = Repair-SPVidComp-Filename -Filename $illegalFilename -Strategy 'Replace' -ReplacementChar '_'
+            $result = Repair-SPVidCompFilename -Filename $illegalFilename -Strategy 'Replace' -ReplacementChar '_'
 
             $result.Success | Should -BeTrue
             $result.Changed | Should -BeTrue
@@ -158,7 +158,7 @@ Describe 'Repair-SPVidComp-Filename' {
         It 'Should use default replacement char of underscore' {
             $illegalFilename = "test`0file.mp4"
 
-            $result = Repair-SPVidComp-Filename -Filename $illegalFilename -Strategy 'Replace'
+            $result = Repair-SPVidCompFilename -Filename $illegalFilename -Strategy 'Replace'
 
             $result.ReplacementChar | Should -Be '_'
         }
@@ -169,7 +169,7 @@ Describe 'Repair-SPVidComp-Filename' {
             # Create a filename with null character
             $illegalFilename = "test" + [char]0 + "file.mp4"
 
-            $result = Repair-SPVidComp-Filename -Filename $illegalFilename -Strategy 'Omit'
+            $result = Repair-SPVidCompFilename -Filename $illegalFilename -Strategy 'Omit'
 
             $result.Success | Should -BeTrue
             $result.Changed | Should -BeTrue
@@ -182,14 +182,14 @@ Describe 'Repair-SPVidComp-Filename' {
         It 'Should return failure for invalid filename' {
             $illegalFilename = "test`0file.mp4"
 
-            $result = Repair-SPVidComp-Filename -Filename $illegalFilename -Strategy 'Error'
+            $result = Repair-SPVidCompFilename -Filename $illegalFilename -Strategy 'Error'
 
             $result.Success | Should -BeFalse
             $result.Error | Should -Not -BeNullOrEmpty
         }
 
         It 'Should succeed for valid filename' {
-            $result = Repair-SPVidComp-Filename -Filename 'valid.mp4' -Strategy 'Error'
+            $result = Repair-SPVidCompFilename -Filename 'valid.mp4' -Strategy 'Error'
 
             $result.Success | Should -BeTrue
         }
@@ -199,7 +199,7 @@ Describe 'Repair-SPVidComp-Filename' {
 #------------------------------------------------------------------------------------------------------------------
 # Disk Space Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Test-SPVidComp-DiskSpace' {
+Describe 'Test-SPVidCompDiskSpace' {
     BeforeAll {
         # Create a temp directory that exists
         $Script:TestTempDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "diskspace-test-$(Get-Random)"
@@ -213,26 +213,26 @@ Describe 'Test-SPVidComp-DiskSpace' {
     }
 
     It 'Should return HasSpace property' {
-        $result = Test-SPVidComp-DiskSpace -Path $Script:TestTempDir -RequiredBytes 1024
+        $result = Test-SPVidCompDiskSpace -Path $Script:TestTempDir -RequiredBytes 1024
 
         $result.Keys | Should -Contain 'HasSpace'
     }
 
     It 'Should return FreeSpace property' {
-        $result = Test-SPVidComp-DiskSpace -Path $Script:TestTempDir -RequiredBytes 1024
+        $result = Test-SPVidCompDiskSpace -Path $Script:TestTempDir -RequiredBytes 1024
 
         $result.Keys | Should -Contain 'FreeSpace'
         $result.FreeSpace | Should -BeGreaterThan 0
     }
 
     It 'Should return true for small space requirement' {
-        $result = Test-SPVidComp-DiskSpace -Path $Script:TestTempDir -RequiredBytes 1024  # 1 KB
+        $result = Test-SPVidCompDiskSpace -Path $Script:TestTempDir -RequiredBytes 1024  # 1 KB
 
         $result.HasSpace | Should -BeTrue
     }
 
     It 'Should return false for impossibly large space requirement' {
-        $result = Test-SPVidComp-DiskSpace -Path $Script:TestTempDir -RequiredBytes ([long]::MaxValue)
+        $result = Test-SPVidCompDiskSpace -Path $Script:TestTempDir -RequiredBytes ([long]::MaxValue)
 
         $result.HasSpace | Should -BeFalse
     }
@@ -241,7 +241,7 @@ Describe 'Test-SPVidComp-DiskSpace' {
 #------------------------------------------------------------------------------------------------------------------
 # Archive Integrity Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Test-SPVidComp-ArchiveIntegrity' {
+Describe 'Test-SPVidCompArchiveIntegrity' {
     BeforeAll {
         $Script:TestDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "archive-test-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:TestDir -Force | Out-Null
@@ -268,31 +268,31 @@ Describe 'Test-SPVidComp-ArchiveIntegrity' {
     }
 
     It 'Should return Success = true for identical files' {
-        $result = Test-SPVidComp-ArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:IdenticalCopy
+        $result = Test-SPVidCompArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:IdenticalCopy
 
         $result.Success | Should -BeTrue
     }
 
     It 'Should return matching hashes for identical files' {
-        $result = Test-SPVidComp-ArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:IdenticalCopy
+        $result = Test-SPVidCompArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:IdenticalCopy
 
         $result.SourceHash | Should -Be $result.DestinationHash
     }
 
     It 'Should return Success = false for different files' {
-        $result = Test-SPVidComp-ArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:DifferentFile
+        $result = Test-SPVidCompArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:DifferentFile
 
         $result.Success | Should -BeFalse
     }
 
     It 'Should return different hashes for different files' {
-        $result = Test-SPVidComp-ArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:DifferentFile
+        $result = Test-SPVidCompArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:DifferentFile
 
         $result.SourceHash | Should -Not -Be $result.DestinationHash
     }
 
     It 'Should return SHA256 hashes' {
-        $result = Test-SPVidComp-ArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:IdenticalCopy
+        $result = Test-SPVidCompArchiveIntegrity -SourcePath $Script:SourceFile -DestinationPath $Script:IdenticalCopy
 
         # SHA256 hash is 64 hex characters
         $result.SourceHash.Length | Should -Be 64
@@ -303,7 +303,7 @@ Describe 'Test-SPVidComp-ArchiveIntegrity' {
 #------------------------------------------------------------------------------------------------------------------
 # Copy Archive Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Copy-SPVidComp-Archive' {
+Describe 'Copy-SPVidCompArchive' {
     BeforeAll {
         $Script:CopyTestDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "copy-archive-test-$(Get-Random)"
         New-Item -ItemType Directory -Path $Script:CopyTestDir -Force | Out-Null
@@ -322,7 +322,7 @@ Describe 'Copy-SPVidComp-Archive' {
     It 'Should copy file to archive location' {
         $archivePath = Join-Path -Path $Script:CopyTestDir -ChildPath 'archive\copied.bin'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:CopySourceFile -ArchivePath $archivePath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:CopySourceFile -ArchivePath $archivePath
 
         $result.Success | Should -BeTrue
         Test-Path -LiteralPath $archivePath | Should -BeTrue
@@ -331,7 +331,7 @@ Describe 'Copy-SPVidComp-Archive' {
     It 'Should return archive path in result' {
         $archivePath = Join-Path -Path $Script:CopyTestDir -ChildPath 'archive2\copied.bin'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:CopySourceFile -ArchivePath $archivePath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:CopySourceFile -ArchivePath $archivePath
 
         $result.ArchivePath | Should -Be $archivePath
     }
@@ -339,7 +339,7 @@ Describe 'Copy-SPVidComp-Archive' {
     It 'Should return source and destination hashes' {
         $archivePath = Join-Path -Path $Script:CopyTestDir -ChildPath 'archive3\copied.bin'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:CopySourceFile -ArchivePath $archivePath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:CopySourceFile -ArchivePath $archivePath
 
         $result.SourceHash | Should -Not -BeNullOrEmpty
         $result.DestinationHash | Should -Not -BeNullOrEmpty
@@ -349,7 +349,7 @@ Describe 'Copy-SPVidComp-Archive' {
     It 'Should create archive directory if it does not exist' {
         $deepPath = Join-Path -Path $Script:CopyTestDir -ChildPath 'deep\nested\archive\path\copied.bin'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:CopySourceFile -ArchivePath $deepPath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:CopySourceFile -ArchivePath $deepPath
 
         $result.Success | Should -BeTrue
         Test-Path -LiteralPath $deepPath | Should -BeTrue
@@ -359,7 +359,7 @@ Describe 'Copy-SPVidComp-Archive' {
 #------------------------------------------------------------------------------------------------------------------
 # Catalog and Database Integration Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Initialize-SPVidComp-Catalog' {
+Describe 'Initialize-SPVidCompCatalog' {
     BeforeEach {
         $Script:TestDbPath = New-TestDatabase
     }
@@ -369,20 +369,20 @@ Describe 'Initialize-SPVidComp-Catalog' {
     }
 
     It 'Should create database file' {
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         Test-Path -LiteralPath $Script:TestDbPath | Should -BeTrue
     }
 
     It 'Should not throw on valid path' {
-        { Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath } | Should -Not -Throw
+        { Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath } | Should -Not -Throw
     }
 }
 
-Describe 'Add-SPVidComp-Video' {
+Describe 'Add-SPVidCompVideo' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
     }
 
     AfterAll {
@@ -392,7 +392,7 @@ Describe 'Add-SPVidComp-Video' {
     It 'Should add video to catalog' {
         $video = Get-TestVideoRecord -Filename 'add-test.mp4'
 
-        $result = Add-SPVidComp-Video @video
+        $result = Add-SPVidCompVideo @video
 
         $result | Should -BeTrue
     }
@@ -400,22 +400,22 @@ Describe 'Add-SPVidComp-Video' {
     It 'Should return true on successful add' {
         $video = Get-TestVideoRecord -Filename "unique-$(Get-Random).mp4"
 
-        $result = Add-SPVidComp-Video @video
+        $result = Add-SPVidCompVideo @video
 
         $result | Should -BeTrue
     }
 }
 
-Describe 'Get-SPVidComp-Videos' {
+Describe 'Get-SPVidCompVideos' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         # Add test videos
         $video1 = Get-TestVideoRecord -Filename 'query-test-1.mp4'
         $video2 = Get-TestVideoRecord -Filename 'query-test-2.mp4'
-        Add-SPVidComp-Video @video1
-        Add-SPVidComp-Video @video2
+        Add-SPVidCompVideo @video1
+        Add-SPVidCompVideo @video2
     }
 
     AfterAll {
@@ -423,33 +423,33 @@ Describe 'Get-SPVidComp-Videos' {
     }
 
     It 'Should return videos from catalog' {
-        $videos = Get-SPVidComp-Videos
+        $videos = Get-SPVidCompVideos
 
         $videos | Should -Not -BeNullOrEmpty
     }
 
     It 'Should filter by status' {
-        $videos = Get-SPVidComp-Videos -Status 'Cataloged'
+        $videos = Get-SPVidCompVideos -Status 'Cataloged'
 
         $videos | ForEach-Object { $_.status | Should -Be 'Cataloged' }
     }
 
     It 'Should respect limit parameter' {
-        $videos = Get-SPVidComp-Videos -Limit 1
+        $videos = Get-SPVidCompVideos -Limit 1
 
         $videos.Count | Should -BeLessOrEqual 1
     }
 }
 
-Describe 'Update-SPVidComp-Status' {
+Describe 'Update-SPVidCompStatus' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         $video = Get-TestVideoRecord -Filename 'status-update-test.mp4'
-        Add-SPVidComp-Video @video
+        Add-SPVidCompVideo @video
 
-        $Script:TestVideoId = (Get-SPVidComp-Videos)[0].id
+        $Script:TestVideoId = (Get-SPVidCompVideos)[0].id
     }
 
     AfterAll {
@@ -457,13 +457,13 @@ Describe 'Update-SPVidComp-Status' {
     }
 
     It 'Should update video status' {
-        $result = Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Downloading'
+        $result = Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Downloading'
 
         $result | Should -BeTrue
     }
 
     It 'Should update with additional fields' {
-        $result = Update-SPVidComp-Status -VideoId $Script:TestVideoId -Status 'Completed' -AdditionalFields @{
+        $result = Update-SPVidCompStatus -VideoId $Script:TestVideoId -Status 'Completed' -AdditionalFields @{
             compressed_size = 50000000
             compression_ratio = 0.5
         }
@@ -472,13 +472,13 @@ Describe 'Update-SPVidComp-Status' {
     }
 }
 
-Describe 'Get-SPVidComp-Statistics' {
+Describe 'Get-SPVidCompStatistics' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         $video = Get-TestVideoRecord -Filename 'stats-test.mp4' -Size 100000000
-        Add-SPVidComp-Video @video
+        Add-SPVidCompVideo @video
     }
 
     AfterAll {
@@ -486,19 +486,19 @@ Describe 'Get-SPVidComp-Statistics' {
     }
 
     It 'Should return statistics hashtable' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats | Should -Not -BeNullOrEmpty
     }
 
     It 'Should include TotalCataloged' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalCataloged | Should -BeGreaterOrEqual 1
     }
 
     It 'Should include TotalOriginalSize' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalOriginalSize | Should -BeGreaterOrEqual 100000000
     }
@@ -510,19 +510,19 @@ Describe 'Get-SPVidComp-Statistics' {
 Describe 'Configuration Functions' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
     }
 
     AfterAll {
         Remove-TestDatabase -Path $Script:TestDbPath
     }
 
-    Describe 'Test-SPVidComp-ConfigExists' {
+    Describe 'Test-SPVidCompConfigExists' {
         It 'Should return false when no config exists' {
             $freshDb = New-TestDatabase -Path (Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "fresh-config-$(Get-Random).db")
-            Initialize-SPVidComp-Catalog -DatabasePath $freshDb
+            Initialize-SPVidCompCatalog -DatabasePath $freshDb
 
-            $result = Test-SPVidComp-ConfigExists
+            $result = Test-SPVidCompConfigExists
 
             # May be true or false depending on state - just verify it doesn't throw
             $result | Should -BeIn @($true, $false)
@@ -530,14 +530,14 @@ Describe 'Configuration Functions' {
             Remove-TestDatabase -Path $freshDb
 
             # Restore the original test database path for subsequent tests
-            Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+            Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         }
     }
 
-    Describe 'Set-SPVidComp-Config and Get-SPVidComp-Config' {
+    Describe 'Set-SPVidCompConfig and Get-SPVidCompConfig' {
         BeforeAll {
             # Ensure we're using the correct test database
-            Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+            Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
         }
 
         It 'Should store configuration values' {
@@ -546,7 +546,7 @@ Describe 'Configuration Functions' {
                 'test_key_2' = 'value2'
             }
 
-            $result = Set-SPVidComp-Config -ConfigValues $config
+            $result = Set-SPVidCompConfig -ConfigValues $config
 
             $result | Should -BeTrue
         }
@@ -555,9 +555,9 @@ Describe 'Configuration Functions' {
             $config = @{
                 'retrieve_test' = 'test_value'
             }
-            Set-SPVidComp-Config -ConfigValues $config
+            Set-SPVidCompConfig -ConfigValues $config
 
-            $retrieved = Get-SPVidComp-Config
+            $retrieved = Get-SPVidCompConfig
 
             $retrieved | Should -Not -BeNullOrEmpty
         }
@@ -567,7 +567,7 @@ Describe 'Configuration Functions' {
 #------------------------------------------------------------------------------------------------------------------
 # Logging Wrapper Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Write-SPVidComp-Log' {
+Describe 'Write-SPVidCompLog' {
     BeforeAll {
         $Script:TestLogPath = New-TestLogDirectory
         Initialize-Logger -LogPath $Script:TestLogPath -LogLevel 'Debug' -ConsoleOutput $false -FileOutput $true
@@ -578,33 +578,33 @@ Describe 'Write-SPVidComp-Log' {
     }
 
     It 'Should not throw on valid log entry' {
-        { Write-SPVidComp-Log -Message 'Test message' -Level 'Info' } | Should -Not -Throw
+        { Write-SPVidCompLog -Message 'Test message' -Level 'Info' } | Should -Not -Throw
     }
 
     It 'Should accept all log levels' {
-        { Write-SPVidComp-Log -Message 'Debug' -Level 'Debug' } | Should -Not -Throw
-        { Write-SPVidComp-Log -Message 'Info' -Level 'Info' } | Should -Not -Throw
-        { Write-SPVidComp-Log -Message 'Warning' -Level 'Warning' } | Should -Not -Throw
-        { Write-SPVidComp-Log -Message 'Error' -Level 'Error' } | Should -Not -Throw
+        { Write-SPVidCompLog -Message 'Debug' -Level 'Debug' } | Should -Not -Throw
+        { Write-SPVidCompLog -Message 'Info' -Level 'Info' } | Should -Not -Throw
+        { Write-SPVidCompLog -Message 'Warning' -Level 'Warning' } | Should -Not -Throw
+        { Write-SPVidCompLog -Message 'Error' -Level 'Error' } | Should -Not -Throw
     }
 
     It 'Should accept component parameter' {
-        { Write-SPVidComp-Log -Message 'Test' -Level 'Info' -Component 'TestComponent' } | Should -Not -Throw
+        { Write-SPVidCompLog -Message 'Test' -Level 'Info' -Component 'TestComponent' } | Should -Not -Throw
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
 # FFmpeg Auto-Download Tests
 #------------------------------------------------------------------------------------------------------------------
-Describe 'Test-SPVidComp-FFmpegAvailability' {
+Describe 'Test-SPVidCompFFmpegAvailability' {
     It 'Should return a hashtable' {
-        $result = Test-SPVidComp-FFmpegAvailability
+        $result = Test-SPVidCompFFmpegAvailability
 
         $result | Should -BeOfType [hashtable]
     }
 
     It 'Should contain required keys' {
-        $result = Test-SPVidComp-FFmpegAvailability
+        $result = Test-SPVidCompFFmpegAvailability
 
         $result.Keys | Should -Contain 'FFmpegAvailable'
         $result.Keys | Should -Contain 'FFprobeAvailable'
@@ -614,7 +614,7 @@ Describe 'Test-SPVidComp-FFmpegAvailability' {
     }
 
     It 'Should return boolean values for availability' {
-        $result = Test-SPVidComp-FFmpegAvailability
+        $result = Test-SPVidCompFFmpegAvailability
 
         $result.FFmpegAvailable | Should -BeOfType [bool]
         $result.FFprobeAvailable | Should -BeOfType [bool]
@@ -622,7 +622,7 @@ Describe 'Test-SPVidComp-FFmpegAvailability' {
     }
 
     It 'Should set AllAvailable to true only if both are available' {
-        $result = Test-SPVidComp-FFmpegAvailability
+        $result = Test-SPVidCompFFmpegAvailability
 
         if ($result.FFmpegAvailable -and $result.FFprobeAvailable) {
             $result.AllAvailable | Should -BeTrue
@@ -633,7 +633,7 @@ Describe 'Test-SPVidComp-FFmpegAvailability' {
     }
 
     It 'Should include version info when -Detailed is used' {
-        $result = Test-SPVidComp-FFmpegAvailability -Detailed
+        $result = Test-SPVidCompFFmpegAvailability -Detailed
 
         if ($result.FFmpegAvailable) {
             $result.FFmpegVersion | Should -Not -BeNullOrEmpty
@@ -644,7 +644,7 @@ Describe 'Test-SPVidComp-FFmpegAvailability' {
     }
 
     It 'Should include path info when available' {
-        $result = Test-SPVidComp-FFmpegAvailability
+        $result = Test-SPVidCompFFmpegAvailability
 
         if ($result.FFmpegAvailable) {
             $result.FFmpegPath | Should -Not -BeNullOrEmpty
@@ -657,7 +657,7 @@ Describe 'Test-SPVidComp-FFmpegAvailability' {
     }
 }
 
-Describe 'Install-SPVidComp-FFmpeg' {
+Describe 'Install-SPVidCompFFmpeg' {
     BeforeAll {
         # Save original module bin directory path
         $Script:OriginalFFmpegBinDir = $Script:FFmpegBinDir
@@ -706,13 +706,13 @@ Describe 'Install-SPVidComp-FFmpeg' {
     }
 
     It 'Should return a hashtable' {
-        $result = Install-SPVidComp-FFmpeg
+        $result = Install-SPVidCompFFmpeg
 
         $result | Should -BeOfType [hashtable]
     }
 
     It 'Should contain required keys on success' {
-        $result = Install-SPVidComp-FFmpeg
+        $result = Install-SPVidCompFFmpeg
 
         $result.Keys | Should -Contain 'Success'
         if ($result.Success) {
@@ -724,7 +724,7 @@ Describe 'Install-SPVidComp-FFmpeg' {
 
     It 'Should contain Error key on failure' {
         # This test would need to mock network failure, so just verify structure
-        $result = Install-SPVidComp-FFmpeg
+        $result = Install-SPVidCompFFmpeg
 
         if (-not $result.Success) {
             $result.Keys | Should -Contain 'Error'
@@ -733,7 +733,7 @@ Describe 'Install-SPVidComp-FFmpeg' {
 
     It 'Should actually download and install ffmpeg binaries' {
         # Force download even if system ffmpeg exists
-        $result = Install-SPVidComp-FFmpeg -Force
+        $result = Install-SPVidCompFFmpeg -Force
 
         $result.Success | Should -BeTrue
         $result.Downloaded | Should -BeTrue
@@ -755,29 +755,29 @@ Describe 'Install-SPVidComp-FFmpeg' {
 
     It 'Should detect already installed ffmpeg without Force' {
         # First install with Force
-        $result1 = Install-SPVidComp-FFmpeg -Force
+        $result1 = Install-SPVidCompFFmpeg -Force
         $result1.Success | Should -BeTrue
         $result1.Downloaded | Should -BeTrue
 
         # Second call without Force should detect existing
-        $result2 = Install-SPVidComp-FFmpeg
+        $result2 = Install-SPVidCompFFmpeg
         $result2.Success | Should -BeTrue
         $result2.Downloaded | Should -BeFalse
     } -Tag 'Integration', 'Download'
 
     It 'Should download again with -Force even if already installed' {
         # First install
-        $result1 = Install-SPVidComp-FFmpeg -Force
+        $result1 = Install-SPVidCompFFmpeg -Force
         $result1.Success | Should -BeTrue
 
         # Second call WITH Force should download again
-        $result2 = Install-SPVidComp-FFmpeg -Force
+        $result2 = Install-SPVidCompFFmpeg -Force
         $result2.Success | Should -BeTrue
         $result2.Downloaded | Should -BeTrue
     } -Tag 'Integration', 'Download'
 
     It 'Should verify downloaded binaries are executable' {
-        $result = Install-SPVidComp-FFmpeg -Force
+        $result = Install-SPVidCompFFmpeg -Force
 
         if ($result.Success) {
             # Try to run ffmpeg -version

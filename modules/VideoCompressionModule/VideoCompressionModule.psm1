@@ -17,10 +17,10 @@ $Script:FFprobePath = $null
 $Script:FFmpegBinDir = Join-Path -Path $PSScriptRoot -ChildPath 'bin/ffmpeg'
 
 #------------------------------------------------------------------------------------------------------------------
-# Helper Function: New-SPVidComp-Directory
+# Helper Function: New-SPVidCompDirectory
 # Purpose: DRY helper to ensure a directory exists, creating it if necessary
 #------------------------------------------------------------------------------------------------------------------
-function New-SPVidComp-Directory {
+function New-SPVidCompDirectory {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -30,20 +30,20 @@ function New-SPVidComp-Directory {
     try {
         if (-not (Test-Path -LiteralPath $Path)) {
             New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
-            Write-SPVidComp-Log -Message "Created directory: $Path" -Level 'Debug'
+            Write-SPVidCompLog -Message "Created directory: $Path" -Level 'Debug'
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to create directory '$Path': $_" -Level 'Warning'
+        Write-SPVidCompLog -Message "Failed to create directory '$Path': $_" -Level 'Warning'
         throw
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Helper Function: Get-SPVidComp-FFmpegPath
+# Helper Function: Get-SPVidCompFFmpegPath
 # Purpose: Find ffmpeg executable (system PATH or downloaded)
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-FFmpegPath {
+function Get-SPVidCompFFmpegPath {
     [CmdletBinding()]
     param()
 
@@ -71,10 +71,10 @@ function Get-SPVidComp-FFmpegPath {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Helper Function: Get-SPVidComp-FFprobePath
+# Helper Function: Get-SPVidCompFFprobePath
 # Purpose: Find ffprobe executable (system PATH or downloaded)
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-FFprobePath {
+function Get-SPVidCompFFprobePath {
     [CmdletBinding()]
     param()
 
@@ -102,10 +102,10 @@ function Get-SPVidComp-FFprobePath {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Install-SPVidComp-FFmpeg
+# Function: Install-SPVidCompFFmpeg
 # Purpose: Download and install ffmpeg/ffprobe for current platform
 #------------------------------------------------------------------------------------------------------------------
-function Install-SPVidComp-FFmpeg {
+function Install-SPVidCompFFmpeg {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
@@ -115,10 +115,10 @@ function Install-SPVidComp-FFmpeg {
     try {
         # Check if already installed (unless Force)
         if (-not $Force) {
-            $ffmpegPath = Get-SPVidComp-FFmpegPath
-            $ffprobePath = Get-SPVidComp-FFprobePath
+            $ffmpegPath = Get-SPVidCompFFmpegPath
+            $ffprobePath = Get-SPVidCompFFprobePath
             if ($ffmpegPath -and $ffprobePath) {
-                Write-SPVidComp-Log -Message "FFmpeg already available at: $ffmpegPath" -Level 'Info'
+                Write-SPVidCompLog -Message "FFmpeg already available at: $ffmpegPath" -Level 'Info'
                 return @{
                     Success = $true
                     FFmpegPath = $ffmpegPath
@@ -128,10 +128,10 @@ function Install-SPVidComp-FFmpeg {
             }
         }
 
-        Write-SPVidComp-Log -Message "Downloading FFmpeg for current platform..." -Level 'Info'
+        Write-SPVidCompLog -Message "Downloading FFmpeg for current platform..." -Level 'Info'
 
         # Get download info for current platform
-        $downloadInfo = Get-SPVidComp-FFmpegDownloadInfo
+        $downloadInfo = Get-SPVidCompFFmpegDownloadInfo
         if (-not $downloadInfo.Success) {
             return @{
                 Success = $false
@@ -140,17 +140,17 @@ function Install-SPVidComp-FFmpeg {
         }
 
         # Create bin directory
-        New-SPVidComp-Directory -Path $Script:FFmpegBinDir
+        New-SPVidCompDirectory -Path $Script:FFmpegBinDir
 
         # Download to temp location
         $tempPath = [System.IO.Path]::GetTempPath()
         $downloadPath = Join-Path -Path $tempPath -ChildPath $downloadInfo.Filename
 
-        Write-SPVidComp-Log -Message "Downloading from: $($downloadInfo.Url)" -Level 'Info'
+        Write-SPVidCompLog -Message "Downloading from: $($downloadInfo.Url)" -Level 'Info'
         Invoke-WebRequest -Uri $downloadInfo.Url -OutFile $downloadPath -UseBasicParsing -ErrorAction Stop
 
         # Extract archive
-        Write-SPVidComp-Log -Message "Extracting FFmpeg..." -Level 'Info'
+        Write-SPVidCompLog -Message "Extracting FFmpeg..." -Level 'Info'
 
         if ($downloadInfo.Filename -match '\.zip$') {
             # Windows ZIP
@@ -179,7 +179,7 @@ function Install-SPVidComp-FFmpeg {
             # Find ffmpeg and ffprobe in extracted folder
             $extractedDir = Join-Path -Path $tempPath -ChildPath ($downloadInfo.Filename -replace '\.tar\.xz$', '')
 
-            Write-SPVidComp-Log -Message "Looking for binaries in: $extractedDir" -Level 'Debug'
+            Write-SPVidCompLog -Message "Looking for binaries in: $extractedDir" -Level 'Debug'
 
             # The archive structure might have binaries in a bin/ subdirectory
             $ffmpegBin = Get-ChildItem -Path $extractedDir -Filter 'ffmpeg' -Recurse -File | Select-Object -First 1
@@ -187,22 +187,22 @@ function Install-SPVidComp-FFmpeg {
 
             if ($ffmpegBin) {
                 $destPath = Join-Path -Path $Script:FFmpegBinDir -ChildPath 'ffmpeg'
-                Write-SPVidComp-Log -Message "Copying ffmpeg from $($ffmpegBin.FullName) to $destPath" -Level 'Debug'
+                Write-SPVidCompLog -Message "Copying ffmpeg from $($ffmpegBin.FullName) to $destPath" -Level 'Debug'
                 Copy-Item -LiteralPath $ffmpegBin.FullName -Destination $destPath -Force
                 & chmod +x $destPath 2>&1 | Out-Null
             }
             else {
-                Write-SPVidComp-Log -Message "ffmpeg binary not found in extracted archive" -Level 'Warning'
+                Write-SPVidCompLog -Message "ffmpeg binary not found in extracted archive" -Level 'Warning'
             }
 
             if ($ffprobeBin) {
                 $destPath = Join-Path -Path $Script:FFmpegBinDir -ChildPath 'ffprobe'
-                Write-SPVidComp-Log -Message "Copying ffprobe from $($ffprobeBin.FullName) to $destPath" -Level 'Debug'
+                Write-SPVidCompLog -Message "Copying ffprobe from $($ffprobeBin.FullName) to $destPath" -Level 'Debug'
                 Copy-Item -LiteralPath $ffprobeBin.FullName -Destination $destPath -Force
                 & chmod +x $destPath 2>&1 | Out-Null
             }
             else {
-                Write-SPVidComp-Log -Message "ffprobe binary not found in extracted archive" -Level 'Warning'
+                Write-SPVidCompLog -Message "ffprobe binary not found in extracted archive" -Level 'Warning'
             }
 
             # Cleanup
@@ -215,11 +215,11 @@ function Install-SPVidComp-FFmpeg {
         # Verify installation
         $Script:FFmpegPath = $null
         $Script:FFprobePath = $null
-        $ffmpegPath = Get-SPVidComp-FFmpegPath
-        $ffprobePath = Get-SPVidComp-FFprobePath
+        $ffmpegPath = Get-SPVidCompFFmpegPath
+        $ffprobePath = Get-SPVidCompFFprobePath
 
         if ($ffmpegPath -and $ffprobePath) {
-            Write-SPVidComp-Log -Message "FFmpeg installed successfully to: $Script:FFmpegBinDir" -Level 'Info'
+            Write-SPVidCompLog -Message "FFmpeg installed successfully to: $Script:FFmpegBinDir" -Level 'Info'
             return @{
                 Success = $true
                 FFmpegPath = $ffmpegPath
@@ -235,7 +235,7 @@ function Install-SPVidComp-FFmpeg {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to install FFmpeg: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to install FFmpeg: $_" -Level 'Error'
         return @{
             Success = $false
             Error = $_.Exception.Message
@@ -244,10 +244,10 @@ function Install-SPVidComp-FFmpeg {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Helper Function: Get-SPVidComp-FFmpegDownloadInfo
+# Helper Function: Get-SPVidCompFFmpegDownloadInfo
 # Purpose: Get download URL and filename for current platform
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-FFmpegDownloadInfo {
+function Get-SPVidCompFFmpegDownloadInfo {
     [CmdletBinding()]
     param()
 
@@ -295,10 +295,10 @@ function Get-SPVidComp-FFmpegDownloadInfo {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Initialize-SPVidComp-Config
+# Function: Initialize-SPVidCompConfig
 # Purpose: Load and initialize configuration from database
 #------------------------------------------------------------------------------------------------------------------
-function Initialize-SPVidComp-Config {
+function Initialize-SPVidCompConfig {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -307,7 +307,7 @@ function Initialize-SPVidComp-Config {
 
     try {
         # Initialize database first
-        Initialize-SPVidComp-Catalog -DatabasePath $DatabasePath
+        $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
 
         # Load configuration from database
         $configHash = Get-AllConfig
@@ -381,7 +381,7 @@ function Initialize-SPVidComp-Config {
             -MaxLogSizeMB $Script:Config.Logging.MaxLogSizeMB `
             -LogRetentionDays $Script:Config.Logging.LogRetentionDays
 
-        Write-SPVidComp-Log -Message "Configuration loaded successfully from database" -Level 'Info'
+        Write-SPVidCompLog -Message "Configuration loaded successfully from database" -Level 'Info'
 
         # Initialize email config
         Initialize-EmailConfig -Config @{
@@ -409,10 +409,10 @@ function Initialize-SPVidComp-Config {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Connect-SPVidComp-SharePoint
+# Function: Connect-SPVidCompSharePoint
 # Purpose: Authenticate to SharePoint using PnP.PowerShell
 #------------------------------------------------------------------------------------------------------------------
-function Connect-SPVidComp-SharePoint {
+function Connect-SPVidCompSharePoint {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -422,60 +422,60 @@ function Connect-SPVidComp-SharePoint {
     try {
         # Check if PnP.PowerShell module is available
         if (-not (Get-Module -ListAvailable -Name PnP.PowerShell)) {
-            Write-SPVidComp-Log -Message "PnP.PowerShell module not found. Installing..." -Level 'Warning'
+            Write-SPVidCompLog -Message "PnP.PowerShell module not found. Installing..." -Level 'Warning'
             Install-Module -Name PnP.PowerShell -Scope CurrentUser -Force -AllowClobber
-            Write-SPVidComp-Log -Message "PnP.PowerShell module installed successfully" -Level 'Info'
+            Write-SPVidCompLog -Message "PnP.PowerShell module installed successfully" -Level 'Info'
         }
 
         # Import module
         Import-Module PnP.PowerShell -ErrorAction Stop
 
         # Connect to SharePoint
-        Write-SPVidComp-Log -Message "Connecting to SharePoint: $SiteUrl" -Level 'Info'
+        Write-SPVidCompLog -Message "Connecting to SharePoint: $SiteUrl" -Level 'Info'
         $Script:SharePointConnection = Connect-PnPOnline -Url $SiteUrl -Interactive -ReturnConnection -ErrorAction Stop
 
-        Write-SPVidComp-Log -Message "Successfully connected to SharePoint" -Level 'Info'
+        Write-SPVidCompLog -Message "Successfully connected to SharePoint" -Level 'Info'
         return $Script:SharePointConnection
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to connect to SharePoint: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to connect to SharePoint: $_" -Level 'Error'
         throw
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Disconnect-SPVidComp-SharePoint
+# Function: Disconnect-SPVidCompSharePoint
 # Purpose: Disconnect from SharePoint and cleanup connection
 #------------------------------------------------------------------------------------------------------------------
-function Disconnect-SPVidComp-SharePoint {
+function Disconnect-SPVidCompSharePoint {
     [CmdletBinding()]
     param()
 
     try {
         if ($Script:SharePointConnection) {
-            Write-SPVidComp-Log -Message "Disconnecting from SharePoint..." -Level 'Info'
+            Write-SPVidCompLog -Message "Disconnecting from SharePoint..." -Level 'Info'
             Disconnect-PnPOnline -Connection $Script:SharePointConnection -ErrorAction SilentlyContinue
             $Script:SharePointConnection = $null
-            Write-SPVidComp-Log -Message "Successfully disconnected from SharePoint" -Level 'Info'
+            Write-SPVidCompLog -Message "Successfully disconnected from SharePoint" -Level 'Info'
             return $true
         }
         else {
-            Write-SPVidComp-Log -Message "No active SharePoint connection to disconnect" -Level 'Debug'
+            Write-SPVidCompLog -Message "No active SharePoint connection to disconnect" -Level 'Debug'
             return $true
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Error disconnecting from SharePoint: $_" -Level 'Warning'
+        Write-SPVidCompLog -Message "Error disconnecting from SharePoint: $_" -Level 'Warning'
         $Script:SharePointConnection = $null
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Initialize-SPVidComp-Catalog
+# Function: Initialize-SPVidCompCatalog
 # Purpose: Create/open SQLite database
 #------------------------------------------------------------------------------------------------------------------
-function Initialize-SPVidComp-Catalog {
+function Initialize-SPVidCompCatalog {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -484,19 +484,19 @@ function Initialize-SPVidComp-Catalog {
 
     try {
         Initialize-Database -DatabasePath $DatabasePath
-        Write-SPVidComp-Log -Message "Video catalog initialized" -Level 'Info'
+        Write-SPVidCompLog -Message "Video catalog initialized" -Level 'Info'
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to initialize video catalog: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to initialize video catalog: $_" -Level 'Error'
         throw
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Add-SPVidComp-Video
+# Function: Add-SPVidCompVideo
 # Purpose: Add video to catalog database
 #------------------------------------------------------------------------------------------------------------------
-function Add-SPVidComp-Video {
+function Add-SPVidCompVideo {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -527,22 +527,22 @@ function Add-SPVidComp-Video {
             -OriginalSize $OriginalSize -ModifiedDate $ModifiedDate
 
         if ($result) {
-            Write-SPVidComp-Log -Message "Video added to catalog: $Filename" -Level 'Debug'
+            Write-SPVidCompLog -Message "Video added to catalog: $Filename" -Level 'Debug'
         }
 
         return $result
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to add video to catalog: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to add video to catalog: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-SPVidComp-Videos
+# Function: Get-SPVidCompVideos
 # Purpose: Query videos from catalog by status
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-Videos {
+function Get-SPVidCompVideos {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
@@ -559,16 +559,16 @@ function Get-SPVidComp-Videos {
         return Get-VideosFromDatabase -Status $Status -MaxRetryCount $MaxRetryCount -Limit $Limit
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to query videos: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to query videos: $_" -Level 'Error'
         return $null
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Update-SPVidComp-Status
+# Function: Update-SPVidCompStatus
 # Purpose: Update video processing status
 #------------------------------------------------------------------------------------------------------------------
-function Update-SPVidComp-Status {
+function Update-SPVidCompStatus {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -585,16 +585,16 @@ function Update-SPVidComp-Status {
         return Update-VideoStatus -VideoId $VideoId -Status $Status -AdditionalFields $AdditionalFields
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to update video status: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to update video status: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-SPVidComp-Files
+# Function: Get-SPVidCompFiles
 # Purpose: Scan SharePoint for MP4 files and add to catalog
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-Files {
+function Get-SPVidCompFiles {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -611,7 +611,7 @@ function Get-SPVidComp-Files {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Scanning SharePoint library: $LibraryName" -Level 'Info'
+        Write-SPVidCompLog -Message "Scanning SharePoint library: $LibraryName" -Level 'Info'
 
         # Get files from SharePoint
         $files = Get-PnPListItem -List $LibraryName -PageSize 500 -Connection $Script:SharePointConnection | Where-Object {
@@ -631,7 +631,7 @@ function Get-SPVidComp-Files {
             $fileFolderPath = Split-Path -Path $fileUrl -Parent
 
             # Add to catalog
-            $added = Add-SPVidComp-Video -SharePointUrl $fullUrl -SiteUrl $SiteUrl `
+            $added = Add-SPVidCompVideo -SharePointUrl $fullUrl -SiteUrl $SiteUrl `
                 -LibraryName $LibraryName -FolderPath $fileFolderPath -Filename $filename `
                 -OriginalSize $fileSize -ModifiedDate $modifiedDate
 
@@ -640,20 +640,20 @@ function Get-SPVidComp-Files {
             }
         }
 
-        Write-SPVidComp-Log -Message "Cataloged $catalogedCount videos from $LibraryName" -Level 'Info'
+        Write-SPVidCompLog -Message "Cataloged $catalogedCount videos from $LibraryName" -Level 'Info'
         return $catalogedCount
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to scan SharePoint files: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to scan SharePoint files: $_" -Level 'Error'
         return 0
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Download-SPVidComp-Video
+# Function: Receive-SPVidCompVideo
 # Purpose: Download video from SharePoint to temp location
 #------------------------------------------------------------------------------------------------------------------
-function Download-SPVidComp-Video {
+function Receive-SPVidCompVideo {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -667,7 +667,7 @@ function Download-SPVidComp-Video {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Downloading video (ID: $VideoId)..." -Level 'Info'
+        Write-SPVidCompLog -Message "Downloading video (ID: $VideoId)..." -Level 'Info'
 
         # Extract server-relative URL
         $uri = [System.Uri]$SharePointUrl
@@ -675,32 +675,32 @@ function Download-SPVidComp-Video {
 
         # Ensure destination directory exists
         $destDir = Split-Path -Path $DestinationPath -Parent
-        New-SPVidComp-Directory -Path $destDir
+        New-SPVidCompDirectory -Path $destDir
 
         # Download file
         Get-PnPFile -Url $serverRelativeUrl -Path $destDir -FileName (Split-Path -Path $DestinationPath -Leaf) `
             -AsFile -Force -Connection $Script:SharePointConnection -ErrorAction Stop
 
         if (Test-Path -LiteralPath $DestinationPath) {
-            Write-SPVidComp-Log -Message "Video downloaded successfully: $DestinationPath" -Level 'Info'
+            Write-SPVidCompLog -Message "Video downloaded successfully: $DestinationPath" -Level 'Info'
             return $true
         }
         else {
-            Write-SPVidComp-Log -Message "Download failed: File not found at destination" -Level 'Error'
+            Write-SPVidCompLog -Message "Download failed: File not found at destination" -Level 'Error'
             return $false
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to download video: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to download video: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Copy-SPVidComp-Archive
+# Function: Copy-SPVidCompArchive
 # Purpose: Copy video to archive storage with hash verification
 #------------------------------------------------------------------------------------------------------------------
-function Copy-SPVidComp-Archive {
+function Copy-SPVidCompArchive {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -711,20 +711,20 @@ function Copy-SPVidComp-Archive {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Archiving video to: $ArchivePath" -Level 'Info'
+        Write-SPVidCompLog -Message "Archiving video to: $ArchivePath" -Level 'Info'
 
         # Ensure archive directory exists
         $archiveDir = Split-Path -Path $ArchivePath -Parent
-        New-SPVidComp-Directory -Path $archiveDir
+        New-SPVidCompDirectory -Path $archiveDir
 
         # Copy file
         Copy-Item -LiteralPath $SourcePath -Destination $ArchivePath -Force -ErrorAction Stop
 
         # Verify copy with hash
-        $verified = Test-SPVidComp-ArchiveIntegrity -SourcePath $SourcePath -DestinationPath $ArchivePath
+        $verified = Test-SPVidCompArchiveIntegrity -SourcePath $SourcePath -DestinationPath $ArchivePath
 
         if ($verified.Success) {
-            Write-SPVidComp-Log -Message "Video archived and verified successfully" -Level 'Info'
+            Write-SPVidCompLog -Message "Video archived and verified successfully" -Level 'Info'
             return @{
                 Success = $true
                 ArchivePath = $ArchivePath
@@ -734,7 +734,7 @@ function Copy-SPVidComp-Archive {
             }
         }
         else {
-            Write-SPVidComp-Log -Message "Archive verification failed: Hash mismatch" -Level 'Error'
+            Write-SPVidCompLog -Message "Archive verification failed: Hash mismatch" -Level 'Error'
             # Delete corrupted archive
             if (Test-Path -LiteralPath $ArchivePath) {
                 Remove-Item -LiteralPath $ArchivePath -Force
@@ -746,7 +746,7 @@ function Copy-SPVidComp-Archive {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to archive video: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to archive video: $_" -Level 'Error'
         return @{
             Success = $false
             Error = $_.Exception.Message
@@ -755,10 +755,10 @@ function Copy-SPVidComp-Archive {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-ArchiveIntegrity
+# Function: Test-SPVidCompArchiveIntegrity
 # Purpose: Verify archive copy using SHA256 hash
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-ArchiveIntegrity {
+function Test-SPVidCompArchiveIntegrity {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -769,7 +769,7 @@ function Test-SPVidComp-ArchiveIntegrity {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Verifying archive integrity..." -Level 'Info'
+        Write-SPVidCompLog -Message "Verifying archive integrity..." -Level 'Info'
 
         # Calculate hashes
         $sourceHash = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256).Hash
@@ -778,10 +778,10 @@ function Test-SPVidComp-ArchiveIntegrity {
         $success = ($sourceHash -eq $destHash)
 
         if ($success) {
-            Write-SPVidComp-Log -Message "Archive integrity verified: Hashes match" -Level 'Info'
+            Write-SPVidCompLog -Message "Archive integrity verified: Hashes match" -Level 'Info'
         }
         else {
-            Write-SPVidComp-Log -Message "Archive integrity check failed: Hash mismatch" -Level 'Error'
+            Write-SPVidCompLog -Message "Archive integrity check failed: Hash mismatch" -Level 'Error'
         }
 
         return @{
@@ -792,7 +792,7 @@ function Test-SPVidComp-ArchiveIntegrity {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to verify archive integrity: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to verify archive integrity: $_" -Level 'Error'
         return @{
             Success = $false
             SourceHash = $null
@@ -803,10 +803,10 @@ function Test-SPVidComp-ArchiveIntegrity {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Invoke-SPVidComp-Compression
+# Function: Invoke-SPVidCompCompression
 # Purpose: Compress video using ffmpeg
 #------------------------------------------------------------------------------------------------------------------
-function Invoke-SPVidComp-Compression {
+function Invoke-SPVidCompCompression {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -826,13 +826,13 @@ function Invoke-SPVidComp-Compression {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Compressing video: $InputPath (timeout: $TimeoutMinutes minutes)" -Level 'Info'
+        Write-SPVidCompLog -Message "Compressing video: $InputPath (timeout: $TimeoutMinutes minutes)" -Level 'Info'
 
         # Get ffmpeg path
-        $ffmpegPath = Get-SPVidComp-FFmpegPath
+        $ffmpegPath = Get-SPVidCompFFmpegPath
         if (-not $ffmpegPath) {
-            Write-SPVidComp-Log -Message "FFmpeg not found. Attempting automatic installation..." -Level 'Warning'
-            $installResult = Install-SPVidComp-FFmpeg
+            Write-SPVidCompLog -Message "FFmpeg not found. Attempting automatic installation..." -Level 'Warning'
+            $installResult = Install-SPVidCompFFmpeg
             if (-not $installResult.Success) {
                 throw "FFmpeg not available and automatic installation failed: $($installResult.Error)"
             }
@@ -852,7 +852,7 @@ function Invoke-SPVidComp-Compression {
         )
 
         $ffmpegCommand = "$ffmpegPath $($ffmpegArgs -join ' ')"
-        Write-SPVidComp-Log -Message "Executing: $ffmpegCommand" -Level 'Debug'
+        Write-SPVidCompLog -Message "Executing: $ffmpegCommand" -Level 'Debug'
 
         # Execute ffmpeg with timeout
         $ffmpegErrorLog = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "ffmpeg-error.log"
@@ -878,7 +878,7 @@ function Invoke-SPVidComp-Compression {
             # Timeout occurred
             $process.Kill()
             $process.WaitForExit()
-            Write-SPVidComp-Log -Message "Compression timed out after $TimeoutMinutes minutes" -Level 'Error'
+            Write-SPVidCompLog -Message "Compression timed out after $TimeoutMinutes minutes" -Level 'Error'
 
             # Save error log
             $errorOutput = $process.StandardError.ReadToEnd()
@@ -901,7 +901,7 @@ function Invoke-SPVidComp-Compression {
             $outputSize = (Get-Item -LiteralPath $OutputPath).Length
             $ratio = [math]::Round(($outputSize / $inputSize), 2)
 
-            Write-SPVidComp-Log -Message "Compression completed successfully. Ratio: $ratio" -Level 'Info'
+            Write-SPVidCompLog -Message "Compression completed successfully. Ratio: $ratio" -Level 'Info'
 
             return @{
                 Success = $true
@@ -912,7 +912,7 @@ function Invoke-SPVidComp-Compression {
             }
         }
         else {
-            Write-SPVidComp-Log -Message "Compression failed. Exit code: $($process.ExitCode). Error: $errorOutput" -Level 'Error'
+            Write-SPVidCompLog -Message "Compression failed. Exit code: $($process.ExitCode). Error: $errorOutput" -Level 'Error'
 
             return @{
                 Success = $false
@@ -925,7 +925,7 @@ function Invoke-SPVidComp-Compression {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to compress video: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to compress video: $_" -Level 'Error'
         return @{
             Success = $false
             InputSize = $null
@@ -937,10 +937,10 @@ function Invoke-SPVidComp-Compression {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-VideoIntegrity
+# Function: Test-SPVidCompVideoIntegrity
 # Purpose: Verify video is not corrupted using ffprobe
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-VideoIntegrity {
+function Test-SPVidCompVideoIntegrity {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -948,13 +948,13 @@ function Test-SPVidComp-VideoIntegrity {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Verifying video integrity: $VideoPath" -Level 'Debug'
+        Write-SPVidCompLog -Message "Verifying video integrity: $VideoPath" -Level 'Debug'
 
         # Get ffprobe path
-        $ffprobePath = Get-SPVidComp-FFprobePath
+        $ffprobePath = Get-SPVidCompFFprobePath
         if (-not $ffprobePath) {
-            Write-SPVidComp-Log -Message "FFprobe not found. Attempting automatic installation..." -Level 'Warning'
-            $installResult = Install-SPVidComp-FFmpeg
+            Write-SPVidCompLog -Message "FFprobe not found. Attempting automatic installation..." -Level 'Warning'
+            $installResult = Install-SPVidCompFFmpeg
             if (-not $installResult.Success) {
                 throw "FFprobe not available and automatic installation failed: $($installResult.Error)"
             }
@@ -989,7 +989,7 @@ function Test-SPVidComp-VideoIntegrity {
         Set-Content -LiteralPath $ffprobeErrorLog -Value $errorOutput -Force
 
         if ($process.ExitCode -eq 0) {
-            Write-SPVidComp-Log -Message "Video integrity verified: No corruption detected" -Level 'Debug'
+            Write-SPVidCompLog -Message "Video integrity verified: No corruption detected" -Level 'Debug'
             return @{
                 Success = $true
                 IsValid = $true
@@ -997,7 +997,7 @@ function Test-SPVidComp-VideoIntegrity {
             }
         }
         else {
-            Write-SPVidComp-Log -Message "Video integrity check failed: $errorOutput" -Level 'Error'
+            Write-SPVidCompLog -Message "Video integrity check failed: $errorOutput" -Level 'Error'
 
             return @{
                 Success = $false
@@ -1007,7 +1007,7 @@ function Test-SPVidComp-VideoIntegrity {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to verify video integrity: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to verify video integrity: $_" -Level 'Error'
         return @{
             Success = $false
             IsValid = $false
@@ -1017,10 +1017,10 @@ function Test-SPVidComp-VideoIntegrity {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-VideoLength
+# Function: Test-SPVidCompVideoLength
 # Purpose: Get video duration and compare original vs compressed
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-VideoLength {
+function Test-SPVidCompVideoLength {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1034,7 +1034,7 @@ function Test-SPVidComp-VideoLength {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Comparing video durations..." -Level 'Debug'
+        Write-SPVidCompLog -Message "Comparing video durations..." -Level 'Debug'
 
         # Get original duration
         $originalDuration = Get-VideoDuration -VideoPath $OriginalPath
@@ -1051,10 +1051,10 @@ function Test-SPVidComp-VideoLength {
         $withinTolerance = ($difference -le $ToleranceSeconds)
 
         if ($withinTolerance) {
-            Write-SPVidComp-Log -Message "Video durations match (difference: $difference seconds)" -Level 'Info'
+            Write-SPVidCompLog -Message "Video durations match (difference: $difference seconds)" -Level 'Info'
         }
         else {
-            Write-SPVidComp-Log -Message "Video duration mismatch: Original=$originalDuration, Compressed=$compressedDuration" -Level 'Warning'
+            Write-SPVidCompLog -Message "Video duration mismatch: Original=$originalDuration, Compressed=$compressedDuration" -Level 'Warning'
         }
 
         return @{
@@ -1067,7 +1067,7 @@ function Test-SPVidComp-VideoLength {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to compare video lengths: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to compare video lengths: $_" -Level 'Error'
         return @{
             Success = $false
             OriginalDuration = $null
@@ -1092,9 +1092,9 @@ function Get-VideoDuration {
 
     try {
         # Get ffprobe path
-        $ffprobePath = Get-SPVidComp-FFprobePath
+        $ffprobePath = Get-SPVidCompFFprobePath
         if (-not $ffprobePath) {
-            Write-SPVidComp-Log -Message "FFprobe not found for duration check" -Level 'Warning'
+            Write-SPVidCompLog -Message "FFprobe not found for duration check" -Level 'Warning'
             return $null
         }
 
@@ -1104,21 +1104,21 @@ function Get-VideoDuration {
             return [double]$output
         }
         else {
-            Write-SPVidComp-Log -Message "Failed to get video duration: $output" -Level 'Warning'
+            Write-SPVidCompLog -Message "Failed to get video duration: $output" -Level 'Warning'
             return $null
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Error getting video duration: $_" -Level 'Warning'
+        Write-SPVidCompLog -Message "Error getting video duration: $_" -Level 'Warning'
         return $null
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Upload-SPVidComp-Video
+# Function: Send-SPVidCompVideo
 # Purpose: Upload compressed video back to SharePoint
 #------------------------------------------------------------------------------------------------------------------
-function Upload-SPVidComp-Video {
+function Send-SPVidCompVideo {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1129,7 +1129,7 @@ function Upload-SPVidComp-Video {
     )
 
     try {
-        Write-SPVidComp-Log -Message "Uploading compressed video to SharePoint..." -Level 'Info'
+        Write-SPVidCompLog -Message "Uploading compressed video to SharePoint..." -Level 'Info'
 
         # Extract server-relative URL
         $uri = [System.Uri]$SharePointUrl
@@ -1140,20 +1140,20 @@ function Upload-SPVidComp-Video {
         # Upload file (overwrite existing)
         Add-PnPFile -Path $LocalPath -Folder $folderPath -Connection $Script:SharePointConnection -ErrorAction Stop
 
-        Write-SPVidComp-Log -Message "Video uploaded successfully to SharePoint" -Level 'Info'
+        Write-SPVidCompLog -Message "Video uploaded successfully to SharePoint" -Level 'Info'
         return $true
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to upload video: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to upload video: $_" -Level 'Error'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Write-SPVidComp-Log
+# Function: Write-SPVidCompLog
 # Purpose: Logging wrapper
 #------------------------------------------------------------------------------------------------------------------
-function Write-SPVidComp-Log {
+function Write-SPVidCompLog {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1171,10 +1171,10 @@ function Write-SPVidComp-Log {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Send-SPVidComp-Notification
+# Function: Send-SPVidCompNotification
 # Purpose: Send email notification
 #------------------------------------------------------------------------------------------------------------------
-function Send-SPVidComp-Notification {
+function Send-SPVidCompNotification {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1191,16 +1191,16 @@ function Send-SPVidComp-Notification {
         return Send-EmailNotification -Subject $Subject -Body $Body -IsHtml $IsHtml
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to send notification: $_" -Level 'Warning'
+        Write-SPVidCompLog -Message "Failed to send notification: $_" -Level 'Warning'
         return $false
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-DiskSpace
+# Function: Test-SPVidCompDiskSpace
 # Purpose: Check available disk space
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-DiskSpace {
+function Test-SPVidCompDiskSpace {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1217,7 +1217,7 @@ function Test-SPVidComp-DiskSpace {
             # Try to create the directory if it doesn't exist
             try {
                 New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
-                Write-SPVidComp-Log -Message "Created directory for disk space check: $Path" -Level 'Info'
+                Write-SPVidCompLog -Message "Created directory for disk space check: $Path" -Level 'Info'
             }
             catch {
                 # If we can't create it, use the parent directory that exists
@@ -1227,11 +1227,11 @@ function Test-SPVidComp-DiskSpace {
                 }
                 if ($parent) {
                     $pathToCheck = $parent
-                    Write-SPVidComp-Log -Message "Using parent directory for disk space check: $pathToCheck" -Level 'Info'
+                    Write-SPVidCompLog -Message "Using parent directory for disk space check: $pathToCheck" -Level 'Info'
                 } else {
                     # Fall back to the root of the path
                     $pathToCheck = [System.IO.Path]::GetPathRoot($Path)
-                    Write-SPVidComp-Log -Message "Using root path for disk space check: $pathToCheck" -Level 'Info'
+                    Write-SPVidCompLog -Message "Using root path for disk space check: $pathToCheck" -Level 'Info'
                 }
             }
         }
@@ -1244,7 +1244,7 @@ function Test-SPVidComp-DiskSpace {
         if (-not $hasSpace) {
             $requiredGB = [math]::Round($RequiredBytes / 1GB, 2)
             $freeGB = [math]::Round($freeSpace / 1GB, 2)
-            Write-SPVidComp-Log -Message "Insufficient disk space: Required=$requiredGB GB, Available=$freeGB GB" -Level 'Warning'
+            Write-SPVidCompLog -Message "Insufficient disk space: Required=$requiredGB GB, Available=$freeGB GB" -Level 'Warning'
         }
 
         return @{
@@ -1256,7 +1256,7 @@ function Test-SPVidComp-DiskSpace {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to check disk space: $_" -Level 'Warning'
+        Write-SPVidCompLog -Message "Failed to check disk space: $_" -Level 'Warning'
         return @{
             Success = $false
             HasSpace = $false
@@ -1268,10 +1268,10 @@ function Test-SPVidComp-DiskSpace {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-SPVidComp-Statistics
+# Function: Get-SPVidCompStatistics
 # Purpose: Generate statistics report from database
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-Statistics {
+function Get-SPVidCompStatistics {
     [CmdletBinding()]
     param()
 
@@ -1279,16 +1279,16 @@ function Get-SPVidComp-Statistics {
         return Get-DatabaseStatistics
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to retrieve statistics: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to retrieve statistics: $_" -Level 'Error'
         return $null
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-SPVidComp-PlatformDefaults
+# Function: Get-SPVidCompPlatformDefaults
 # Purpose: Get platform-specific default paths
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-PlatformDefaults {
+function Get-SPVidCompPlatformDefaults {
     [CmdletBinding()]
     param()
 
@@ -1320,10 +1320,10 @@ function Get-SPVidComp-PlatformDefaults {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-SPVidComp-IllegalCharacters
+# Function: Get-SPVidCompIllegalCharacters
 # Purpose: Get platform-specific illegal filename characters
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-IllegalCharacters {
+function Get-SPVidCompIllegalCharacters {
     [CmdletBinding()]
     param()
 
@@ -1332,10 +1332,10 @@ function Get-SPVidComp-IllegalCharacters {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-FilenameCharacters
+# Function: Test-SPVidCompFilenameCharacters
 # Purpose: Check if filename contains illegal characters
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-FilenameCharacters {
+function Test-SPVidCompFilenameCharacters {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1343,7 +1343,7 @@ function Test-SPVidComp-FilenameCharacters {
     )
 
     try {
-        $illegalChars = Get-SPVidComp-IllegalCharacters
+        $illegalChars = Get-SPVidCompIllegalCharacters
 
         # Use character-by-character comparison for reliable detection
         # (String.Contains may not reliably detect all special characters like null)
@@ -1375,7 +1375,7 @@ function Test-SPVidComp-FilenameCharacters {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to test filename characters: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to test filename characters: $_" -Level 'Error'
         return @{
             Success = $false
             IsValid = $false
@@ -1387,10 +1387,10 @@ function Test-SPVidComp-FilenameCharacters {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Repair-SPVidComp-Filename
+# Function: Repair-SPVidCompFilename
 # Purpose: Sanitize filename based on configured strategy
 #------------------------------------------------------------------------------------------------------------------
-function Repair-SPVidComp-Filename {
+function Repair-SPVidCompFilename {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1405,7 +1405,7 @@ function Repair-SPVidComp-Filename {
     )
 
     try {
-        $test = Test-SPVidComp-FilenameCharacters -Filename $Filename
+        $test = Test-SPVidCompFilenameCharacters -Filename $Filename
 
         if ($test.IsValid) {
             return @{
@@ -1439,7 +1439,7 @@ function Repair-SPVidComp-Filename {
                 }
                 $sanitized = -join $sanitizedChars
 
-                Write-SPVidComp-Log -Message "Filename sanitized (omit): '$Filename' -> '$sanitized'" -Level 'Info'
+                Write-SPVidCompLog -Message "Filename sanitized (omit): '$Filename' -> '$sanitized'" -Level 'Info'
 
                 return @{
                     Success = $true
@@ -1463,7 +1463,7 @@ function Repair-SPVidComp-Filename {
                 }
                 $sanitized = -join $sanitizedChars
 
-                Write-SPVidComp-Log -Message "Filename sanitized (replace): '$Filename' -> '$sanitized'" -Level 'Info'
+                Write-SPVidCompLog -Message "Filename sanitized (replace): '$Filename' -> '$sanitized'" -Level 'Info'
 
                 return @{
                     Success = $true
@@ -1478,7 +1478,7 @@ function Repair-SPVidComp-Filename {
         }
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to repair filename: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to repair filename: $_" -Level 'Error'
         return @{
             Success = $false
             OriginalFilename = $Filename
@@ -1490,10 +1490,10 @@ function Repair-SPVidComp-Filename {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-ConfigExists
+# Function: Test-SPVidCompConfigExists
 # Purpose: Check if configuration exists in database
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-ConfigExists {
+function Test-SPVidCompConfigExists {
     [CmdletBinding()]
     param()
 
@@ -1506,10 +1506,10 @@ function Test-SPVidComp-ConfigExists {
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Get-SPVidComp-Config
+# Function: Get-SPVidCompConfig
 # Purpose: Retrieve current configuration from database
 #------------------------------------------------------------------------------------------------------------------
-function Get-SPVidComp-Config {
+function Get-SPVidCompConfig {
     [CmdletBinding()]
     param()
 
@@ -1517,16 +1517,16 @@ function Get-SPVidComp-Config {
         return Get-AllConfig
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to retrieve configuration: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to retrieve configuration: $_" -Level 'Error'
         return @{}
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Test-SPVidComp-FFmpegAvailability
+# Function: Test-SPVidCompFFmpegAvailability
 # Purpose: Check if ffmpeg and ffprobe are available before processing
 #------------------------------------------------------------------------------------------------------------------
-function Test-SPVidComp-FFmpegAvailability {
+function Test-SPVidCompFFmpegAvailability {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
@@ -1547,7 +1547,7 @@ function Test-SPVidComp-FFmpegAvailability {
     try {
         # Test ffmpeg using path helper (checks system PATH and module bin directory)
         try {
-            $ffmpegPath = Get-SPVidComp-FFmpegPath
+            $ffmpegPath = Get-SPVidCompFFmpegPath
             if ($ffmpegPath) {
                 $ffmpegTest = & $ffmpegPath -version 2>&1 | Select-Object -First 1
                 if ($ffmpegTest -match 'ffmpeg version') {
@@ -1556,22 +1556,22 @@ function Test-SPVidComp-FFmpegAvailability {
                     if ($Detailed) {
                         $result.FFmpegVersion = $ffmpegTest
                     }
-                    Write-SPVidComp-Log -Message "ffmpeg is available at $ffmpegPath : $ffmpegTest" -Level 'Debug'
+                    Write-SPVidCompLog -Message "ffmpeg is available at $ffmpegPath : $ffmpegTest" -Level 'Debug'
                 }
             }
             else {
                 $result.Errors += "ffmpeg not found in system PATH or module bin directory"
-                Write-SPVidComp-Log -Message "ffmpeg is not available" -Level 'Warning'
+                Write-SPVidCompLog -Message "ffmpeg is not available" -Level 'Warning'
             }
         }
         catch {
             $result.Errors += "ffmpeg not found: $_"
-            Write-SPVidComp-Log -Message "ffmpeg is not available: $_" -Level 'Warning'
+            Write-SPVidCompLog -Message "ffmpeg is not available: $_" -Level 'Warning'
         }
 
         # Test ffprobe using path helper (checks system PATH and module bin directory)
         try {
-            $ffprobePath = Get-SPVidComp-FFprobePath
+            $ffprobePath = Get-SPVidCompFFprobePath
             if ($ffprobePath) {
                 $ffprobeTest = & $ffprobePath -version 2>&1 | Select-Object -First 1
                 if ($ffprobeTest -match 'ffprobe version') {
@@ -1580,42 +1580,42 @@ function Test-SPVidComp-FFmpegAvailability {
                     if ($Detailed) {
                         $result.FFprobeVersion = $ffprobeTest
                     }
-                    Write-SPVidComp-Log -Message "ffprobe is available at $ffprobePath : $ffprobeTest" -Level 'Debug'
+                    Write-SPVidCompLog -Message "ffprobe is available at $ffprobePath : $ffprobeTest" -Level 'Debug'
                 }
             }
             else {
                 $result.Errors += "ffprobe not found in system PATH or module bin directory"
-                Write-SPVidComp-Log -Message "ffprobe is not available" -Level 'Warning'
+                Write-SPVidCompLog -Message "ffprobe is not available" -Level 'Warning'
             }
         }
         catch {
             $result.Errors += "ffprobe not found: $_"
-            Write-SPVidComp-Log -Message "ffprobe is not available: $_" -Level 'Warning'
+            Write-SPVidCompLog -Message "ffprobe is not available: $_" -Level 'Warning'
         }
 
         $result.AllAvailable = $result.FFmpegAvailable -and $result.FFprobeAvailable
 
         if ($result.AllAvailable) {
-            Write-SPVidComp-Log -Message "All required video processing tools are available" -Level 'Info'
+            Write-SPVidCompLog -Message "All required video processing tools are available" -Level 'Info'
         }
         else {
-            Write-SPVidComp-Log -Message "Missing required tools. ffmpeg: $($result.FFmpegAvailable), ffprobe: $($result.FFprobeAvailable)" -Level 'Error'
+            Write-SPVidCompLog -Message "Missing required tools. ffmpeg: $($result.FFmpegAvailable), ffprobe: $($result.FFprobeAvailable)" -Level 'Error'
         }
 
         return $result
     }
     catch {
-        Write-SPVidComp-Log -Message "Error checking ffmpeg/ffprobe availability: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Error checking ffmpeg/ffprobe availability: $_" -Level 'Error'
         $result.Errors += $_
         return $result
     }
 }
 
 #------------------------------------------------------------------------------------------------------------------
-# Function: Set-SPVidComp-Config
+# Function: Set-SPVidCompConfig
 # Purpose: Store configuration in database
 #------------------------------------------------------------------------------------------------------------------
-function Set-SPVidComp-Config {
+function Set-SPVidCompConfig {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -1623,24 +1623,24 @@ function Set-SPVidComp-Config {
     )
 
     try {
-        foreach ($key in $ConfigValues.Keys) {
-            Set-ConfigValue -Key $key -Value $ConfigValues[$key]
+        $result = Set-Config -ConfigValues $ConfigValues
+        if ($result) {
+            Write-SPVidCompLog -Message "Configuration saved successfully" -Level 'Info'
         }
-        Write-SPVidComp-Log -Message "Configuration saved successfully" -Level 'Info'
-        return $true
+        return $result
     }
     catch {
-        Write-SPVidComp-Log -Message "Failed to save configuration: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Failed to save configuration: $_" -Level 'Error'
         return $false
     }
 }
 
 # Export public functions
-Export-ModuleMember -Function Initialize-SPVidComp-Config, Connect-SPVidComp-SharePoint, Disconnect-SPVidComp-SharePoint, `
-    Initialize-SPVidComp-Catalog, Add-SPVidComp-Video, Get-SPVidComp-Videos, Update-SPVidComp-Status, `
-    Get-SPVidComp-Files, Download-SPVidComp-Video, Copy-SPVidComp-Archive, Test-SPVidComp-ArchiveIntegrity, `
-    Invoke-SPVidComp-Compression, Test-SPVidComp-VideoIntegrity, Test-SPVidComp-VideoLength, `
-    Upload-SPVidComp-Video, Write-SPVidComp-Log, Send-SPVidComp-Notification, Test-SPVidComp-DiskSpace, `
-    Get-SPVidComp-Statistics, Test-SPVidComp-ConfigExists, Get-SPVidComp-Config, Set-SPVidComp-Config, `
-    Get-SPVidComp-PlatformDefaults, Get-SPVidComp-IllegalCharacters, Test-SPVidComp-FilenameCharacters, `
-    Repair-SPVidComp-Filename, Test-SPVidComp-FFmpegAvailability, Install-SPVidComp-FFmpeg
+Export-ModuleMember -Function Initialize-SPVidCompConfig, Connect-SPVidCompSharePoint, Disconnect-SPVidCompSharePoint, `
+    Initialize-SPVidCompCatalog, Add-SPVidCompVideo, Get-SPVidCompVideos, Update-SPVidCompStatus, `
+    Get-SPVidCompFiles, Receive-SPVidCompVideo, Copy-SPVidCompArchive, Test-SPVidCompArchiveIntegrity, `
+    Invoke-SPVidCompCompression, Test-SPVidCompVideoIntegrity, Test-SPVidCompVideoLength, `
+    Send-SPVidCompVideo, Write-SPVidCompLog, Send-SPVidCompNotification, Test-SPVidCompDiskSpace, `
+    Get-SPVidCompStatistics, Test-SPVidCompConfigExists, Get-SPVidCompConfig, Set-SPVidCompConfig, `
+    Get-SPVidCompPlatformDefaults, Get-SPVidCompIllegalCharacters, Test-SPVidCompFilenameCharacters, `
+    Repair-SPVidCompFilename, Test-SPVidCompFFmpegAvailability, Install-SPVidCompFFmpeg

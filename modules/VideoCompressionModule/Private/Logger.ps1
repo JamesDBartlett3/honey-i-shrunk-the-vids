@@ -6,7 +6,7 @@
 $Script:LogConfig = @{
     LogPath = $null
     LogLevel = 'Info'
-    ConsoleOutput = $true
+    ConsoleOutput = $false
     FileOutput = $true
     MaxLogSizeMB = 100
     LogRetentionDays = 30

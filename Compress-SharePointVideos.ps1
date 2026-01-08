@@ -130,7 +130,7 @@ function Initialize-Configuration {
     Write-Host "Please provide the following configuration details.`n" -ForegroundColor Green
 
     # Detect platform and get defaults
-    $platformDefaults = Get-SPVidComp-PlatformDefaults
+    $platformDefaults = Get-SPVidCompPlatformDefaults
 
     if ($IsWindows) {
         Write-Host "Detected Platform: Windows" -ForegroundColor Green
@@ -244,10 +244,10 @@ function Initialize-Configuration {
     Write-Host "`n`nSaving configuration to database..." -ForegroundColor Yellow
 
     # Initialize database first (without loading config)
-    Initialize-SPVidComp-Catalog -DatabasePath $DatabasePath
+    $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
 
     # Save configuration
-    Set-SPVidComp-Config -ConfigValues $config
+    $null = Set-SPVidCompConfig -ConfigValues $config
 
     Write-Host "Configuration saved successfully!" -ForegroundColor Green
 
@@ -261,10 +261,10 @@ try {
     Show-Header "SharePoint Video Compression & Archival"
 
     # Initialize database first
-    Initialize-SPVidComp-Catalog -DatabasePath $DatabasePath
+    $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
 
     # Check if configuration exists or if Setup is requested
-    $configExists = Test-SPVidComp-ConfigExists
+    $configExists = Test-SPVidCompConfigExists
 
     if (-not $configExists -or $Setup) {
         if (-not $configExists) {
@@ -283,7 +283,7 @@ try {
     }
 
     # Load configuration from database
-    $currentConfig = Get-SPVidComp-Config
+    $currentConfig = Get-SPVidCompConfig
 
     # Display current settings and ask for confirmation
     Show-CurrentConfig -Config $currentConfig
@@ -314,7 +314,7 @@ try {
 
     # Initialize configuration
     Write-Host "Loading configuration..." -ForegroundColor Yellow
-    Initialize-SPVidComp-Config -DatabasePath $DatabasePath
+    $null = Initialize-SPVidCompConfig -DatabasePath $DatabasePath
 
     # Get config object for reference
     $Script:Config = [PSCustomObject]$currentConfig
@@ -331,14 +331,14 @@ catch {
 #------------------------------------------------------------------------------------------------------------------
 # Phase 1: Catalog Discovery
 #------------------------------------------------------------------------------------------------------------------
-if ($Phase -eq 'Catalog' -or $Phase -eq 'Both') {
+if ($Phase -in @('Catalog', 'Both')) {
     try {
         Show-Header "PHASE 1: CATALOG DISCOVERY"
 
         # Connect to SharePoint
         Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
         $siteUrl = Get-ConfigValue -Key 'sharepoint_site_url'
-        Connect-SPVidComp-SharePoint -SiteUrl $siteUrl
+        $null = Connect-SPVidCompSharePoint -SiteUrl $siteUrl
 
         # Scan for videos
         Write-Host "`nScanning SharePoint for MP4 videos..." -ForegroundColor Yellow
@@ -346,7 +346,7 @@ if ($Phase -eq 'Catalog' -or $Phase -eq 'Both') {
         $folderPath = Get-ConfigValue -Key 'sharepoint_folder_path'
         $recursive = [bool]::Parse((Get-ConfigValue -Key 'sharepoint_recursive'))
 
-        $catalogedCount = Get-SPVidComp-Files -SiteUrl $siteUrl `
+        $catalogedCount = Get-SPVidCompFiles -SiteUrl $siteUrl `
             -LibraryName $libraryName `
             -FolderPath $folderPath `
             -Recursive $recursive
@@ -356,7 +356,7 @@ if ($Phase -eq 'Catalog' -or $Phase -eq 'Both') {
 
         # Show catalog statistics
         Write-Host "`nCatalog Statistics:" -ForegroundColor Yellow
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         Write-Host "  Total Videos: $($stats.TotalCataloged)" -ForegroundColor White
         Write-Host "  Total Size: $([math]::Round($stats.TotalOriginalSize / 1GB, 2)) GB" -ForegroundColor White
@@ -367,13 +367,13 @@ if ($Phase -eq 'Catalog' -or $Phase -eq 'Both') {
         }
 
         # Store catalog run metadata
-        Set-Metadata -Key 'last_catalog_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        Set-Metadata -Key 'total_cataloged' -Value $stats.TotalCataloged.ToString()
+        $null = Set-Metadata -Key 'last_catalog_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        $null = Set-Metadata -Key 'total_cataloged' -Value $stats.TotalCataloged.ToString()
 
         Write-Host "`nPhase 1 Complete!`n" -ForegroundColor Green
     }
     catch {
-        Write-SPVidComp-Log -Message "Catalog phase failed: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Catalog phase failed: $_" -Level 'Error'
         Write-Error "Catalog phase failed: $_"
         exit 1
     }
@@ -382,7 +382,7 @@ if ($Phase -eq 'Catalog' -or $Phase -eq 'Both') {
 #------------------------------------------------------------------------------------------------------------------
 # Phase 2: Processing
 #------------------------------------------------------------------------------------------------------------------
-if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
+if ($Phase -in @('Process', 'Both')) {
     try {
         Show-Header "PHASE 2: VIDEO PROCESSING"
 
@@ -390,18 +390,18 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
         if ($Phase -eq 'Process') {
             Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
             $siteUrl = Get-ConfigValue -Key 'sharepoint_site_url'
-            Connect-SPVidComp-SharePoint -SiteUrl $siteUrl
+            $null = Connect-SPVidCompSharePoint -SiteUrl $siteUrl
         }
 
         # Query videos to process
         Write-Host "`nQuerying videos to process..." -ForegroundColor Yellow
         $retryAttempts = [int](Get-ConfigValue -Key 'processing_retry_attempts')
-        $videosToProcess = Get-SPVidComp-Videos -Status 'Cataloged' -MaxRetryCount $retryAttempts
+        $videosToProcess = Get-SPVidCompVideos -Status 'Cataloged' -MaxRetryCount $retryAttempts
 
         if (-not $videosToProcess -or $videosToProcess.Count -eq 0) {
             Write-Host "No videos to process." -ForegroundColor Yellow
             Write-Host "`nChecking for failed videos to retry..." -ForegroundColor Yellow
-            $videosToProcess = Get-SPVidComp-Videos -Status 'Failed' -MaxRetryCount $retryAttempts
+            $videosToProcess = Get-SPVidCompVideos -Status 'Failed' -MaxRetryCount $retryAttempts
         }
 
         if (-not $videosToProcess -or $videosToProcess.Count -eq 0) {
@@ -416,7 +416,7 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
         $tempPath = Get-ConfigValue -Key 'paths_temp_download'
         $requiredSpaceGB = [int](Get-ConfigValue -Key 'processing_required_disk_space_gb')
         $requiredSpace = $requiredSpaceGB * 1GB
-        $spaceCheck = Test-SPVidComp-DiskSpace -Path $tempPath -RequiredBytes $requiredSpace
+        $spaceCheck = Test-SPVidCompDiskSpace -Path $tempPath -RequiredBytes $requiredSpace
 
         if (-not $spaceCheck.HasSpace) {
             Write-Error "Insufficient disk space. Required: $requiredSpaceGB GB"
@@ -457,9 +457,9 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
 
                 # Step 1: Download
                 Write-Host "`n[1/6] Downloading from SharePoint..." -ForegroundColor Yellow
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Downloading'
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Downloading'
 
-                $downloadSuccess = Download-SPVidComp-Video -SharePointUrl $video.sharepoint_url `
+                $downloadSuccess = Receive-SPVidCompVideo -SharePointUrl $video.sharepoint_url `
                     -DestinationPath $tempOriginal -VideoId $video.id
 
                 if (-not $downloadSuccess) {
@@ -468,10 +468,10 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
 
                 # Step 2: Archive with hash verification
                 Write-Host "[2/6] Archiving to external storage..." -ForegroundColor Yellow
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Archiving'
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Archiving'
 
                 # Sanitize filename for filesystem compatibility
-                $sanitizeResult = Repair-SPVidComp-Filename -Filename $video.filename `
+                $sanitizeResult = Repair-SPVidCompFilename -Filename $video.filename `
                     -Strategy $illegalCharStrategy -ReplacementChar $illegalCharReplacement
 
                 if (-not $sanitizeResult.Success) {
@@ -517,14 +517,14 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $sanitizeResult.SanitizedFilename
 
                 Write-Host "  Archive path: $videoArchivePath" -ForegroundColor Gray
-                $archiveResult = Copy-SPVidComp-Archive -SourcePath $tempOriginal -ArchivePath $videoArchivePath
+                $archiveResult = Copy-SPVidCompArchive -SourcePath $tempOriginal -ArchivePath $videoArchivePath
 
                 if (-not $archiveResult.Success) {
                     throw "Archive failed: $($archiveResult.Error)"
                 }
 
                 # Update database with archive info
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Archiving' -AdditionalFields @{
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Archiving' -AdditionalFields @{
                     archive_path = $archiveResult.ArchivePath
                     original_hash = $archiveResult.SourceHash
                     archive_hash = $archiveResult.DestinationHash
@@ -533,9 +533,9 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
 
                 # Step 3: Compress
                 Write-Host "[3/6] Compressing video..." -ForegroundColor Yellow
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Compressing'
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Compressing'
 
-                $compressionResult = Invoke-SPVidComp-Compression -InputPath $tempOriginal `
+                $compressionResult = Invoke-SPVidCompCompression -InputPath $tempOriginal `
                     -OutputPath $tempCompressed -FrameRate $frameRate `
                     -VideoCodec $videoCodec -TimeoutMinutes $timeoutMinutes
 
@@ -545,15 +545,15 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
 
                 # Step 4: Verify integrity
                 Write-Host "[4/6] Verifying compressed video..." -ForegroundColor Yellow
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Verifying'
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Verifying'
 
-                $integrityCheck = Test-SPVidComp-VideoIntegrity -VideoPath $tempCompressed
+                $integrityCheck = Test-SPVidCompVideoIntegrity -VideoPath $tempCompressed
 
                 if (-not $integrityCheck.IsValid) {
                     throw "Integrity check failed: Video is corrupted"
                 }
 
-                $lengthCheck = Test-SPVidComp-VideoLength -OriginalPath $tempOriginal -CompressedPath $tempCompressed `
+                $lengthCheck = Test-SPVidCompVideoLength -OriginalPath $tempOriginal -CompressedPath $tempCompressed `
                     -ToleranceSeconds $durationTolerance
 
                 if (-not $lengthCheck.WithinTolerance) {
@@ -561,7 +561,7 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 }
 
                 # Update database with verification info
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Verifying' -AdditionalFields @{
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Verifying' -AdditionalFields @{
                     compressed_size = $compressionResult.OutputSize
                     compression_ratio = $compressionResult.CompressionRatio
                     original_duration = $lengthCheck.OriginalDuration
@@ -571,9 +571,9 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
 
                 # Step 5: Upload compressed version
                 Write-Host "[5/6] Uploading to SharePoint..." -ForegroundColor Yellow
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Uploading'
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Uploading'
 
-                $uploadSuccess = Upload-SPVidComp-Video -LocalPath $tempCompressed -SharePointUrl $video.sharepoint_url
+                $uploadSuccess = Send-SPVidCompVideo -LocalPath $tempCompressed -SharePointUrl $video.sharepoint_url
 
                 if (-not $uploadSuccess) {
                     throw "Upload failed"
@@ -590,7 +590,7 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 }
 
                 # Mark as completed
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Completed'
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Completed'
 
                 Write-Host "`nSUCCESS!" -ForegroundColor Green
                 Write-Host "Compression ratio: $($compressionResult.CompressionRatio)" -ForegroundColor Green
@@ -599,12 +599,12 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 $processedCount++
             }
             catch {
-                Write-SPVidComp-Log -Message "Failed to process video $($video.filename): $_" -Level 'Error'
+                Write-SPVidCompLog -Message "Failed to process video $($video.filename): $_" -Level 'Error'
                 Write-Host "`nFAILED: $_" -ForegroundColor Red
 
                 # Update retry count and mark as failed
                 $retryCount = $video.retry_count + 1
-                Update-SPVidComp-Status -VideoId $video.id -Status 'Failed' -AdditionalFields @{
+                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Failed' -AdditionalFields @{
                     last_error = $_.Exception.Message
                     retry_count = $retryCount
                 }
@@ -626,7 +626,7 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
                 if ($emailEnabled -and $sendOnError) {
                     $errorBody = Build-ErrorReport -ErrorMessage $_.Exception.Message `
                         -VideoFilename $video.filename -SharePointUrl $video.sharepoint_url
-                    Send-SPVidComp-Notification -Subject "Video Compression Error: $($video.filename)" `
+                    Send-SPVidCompNotification -Subject "Video Compression Error: $($video.filename)" `
                         -Body $errorBody -IsHtml $true
                 }
             }
@@ -638,7 +638,7 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
         Write-Host ""
 
         # Generate final report
-        $finalStats = Get-SPVidComp-Statistics
+        $finalStats = Get-SPVidCompStatistics
 
         Write-Host "Final Statistics:" -ForegroundColor Yellow
         Write-Host "  Total Cataloged: $($finalStats.TotalCataloged)" -ForegroundColor White
@@ -653,20 +653,20 @@ if ($Phase -eq 'Process' -or $Phase -eq 'Both') {
         if ($emailEnabled -and $sendOnCompletion) {
             Write-Host "`nSending completion notification..." -ForegroundColor Yellow
 
-            $failedVideos = Get-SPVidComp-Videos -Status 'Failed'
+            $failedVideos = Get-SPVidCompVideos -Status 'Failed'
             $reportBody = Build-CompletionReport -Statistics $finalStats -FailedVideos $failedVideos
-            Send-SPVidComp-Notification -Subject "SharePoint Video Compression Report" `
+            Send-SPVidCompNotification -Subject "SharePoint Video Compression Report" `
                 -Body $reportBody -IsHtml $true
 
             Write-Host "Notification sent!" -ForegroundColor Green
         }
 
         # Store processing run metadata
-        Set-Metadata -Key 'last_processing_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-        Set-Metadata -Key 'total_processed' -Value $processedCount.ToString()
+        $null = Set-Metadata -Key 'last_processing_run' -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        $null = Set-Metadata -Key 'total_processed' -Value $processedCount.ToString()
     }
     catch {
-        Write-SPVidComp-Log -Message "Processing phase failed: $_" -Level 'Error'
+        Write-SPVidCompLog -Message "Processing phase failed: $_" -Level 'Error'
         Write-Error "Processing phase failed: $_"
         exit 1
     }

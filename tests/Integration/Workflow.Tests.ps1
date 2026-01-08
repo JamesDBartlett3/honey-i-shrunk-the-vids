@@ -70,7 +70,7 @@ function New-MockCompressedFile {
 Describe 'Catalog Phase Workflow' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
     }
 
     AfterAll {
@@ -78,7 +78,7 @@ Describe 'Catalog Phase Workflow' {
     }
 
     It 'Should initialize empty catalog' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalCataloged | Should -Be 0
     }
@@ -91,21 +91,21 @@ Describe 'Catalog Phase Workflow' {
         )
 
         foreach ($video in $videos) {
-            Add-SPVidComp-Video @video
+            Add-SPVidCompVideo @video
         }
 
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
         $stats.TotalCataloged | Should -Be 3
     }
 
     It 'Should track total original size' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalOriginalSize | Should -Be 450000000  # 100 + 200 + 150 MB
     }
 
     It 'Should set all videos to Cataloged status' {
-        $videos = Get-SPVidComp-Videos -Status 'Cataloged'
+        $videos = Get-SPVidCompVideos -Status 'Cataloged'
 
         $videos.Count | Should -Be 3
     }
@@ -117,13 +117,13 @@ Describe 'Catalog Phase Workflow' {
 Describe 'Processing Phase Workflow' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         # Add a test video
         $video = Get-TestVideoRecord -Filename 'process-test.mp4' -Size 100000000
-        Add-SPVidComp-Video @video
+        Add-SPVidCompVideo @video
 
-        $Script:TestVideo = (Get-SPVidComp-Videos)[0]
+        $Script:TestVideo = (Get-SPVidCompVideos)[0]
 
         # Create a mock original file
         $Script:MockOriginalFile = Join-Path -Path $Script:TestTempDir -ChildPath 'original.mp4'
@@ -139,55 +139,55 @@ Describe 'Processing Phase Workflow' {
 
     Describe 'Status Progression' {
         It 'Should progress from Cataloged to Downloading' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Downloading'
+            Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Downloading'
 
-            $video = (Get-SPVidComp-Videos -Status 'Downloading')[0]
+            $video = (Get-SPVidCompVideos -Status 'Downloading')[0]
             $video.status | Should -Be 'Downloading'
         }
 
         It 'Should set processing_started timestamp on Downloading' {
-            $video = (Get-SPVidComp-Videos -Status 'Downloading')[0]
+            $video = (Get-SPVidCompVideos -Status 'Downloading')[0]
 
             $video.processing_started | Should -Not -BeNullOrEmpty
         }
 
         It 'Should progress to Archiving' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Archiving'
+            Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Archiving'
 
-            $video = (Get-SPVidComp-Videos -Status 'Archiving')[0]
+            $video = (Get-SPVidCompVideos -Status 'Archiving')[0]
             $video.status | Should -Be 'Archiving'
         }
 
         It 'Should progress to Compressing' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Compressing'
+            Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Compressing'
 
-            $video = (Get-SPVidComp-Videos -Status 'Compressing')[0]
+            $video = (Get-SPVidCompVideos -Status 'Compressing')[0]
             $video.status | Should -Be 'Compressing'
         }
 
         It 'Should progress to Verifying' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Verifying'
+            Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Verifying'
 
-            $video = (Get-SPVidComp-Videos -Status 'Verifying')[0]
+            $video = (Get-SPVidCompVideos -Status 'Verifying')[0]
             $video.status | Should -Be 'Verifying'
         }
 
         It 'Should progress to Uploading' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Uploading'
+            Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Uploading'
 
-            $video = (Get-SPVidComp-Videos -Status 'Uploading')[0]
+            $video = (Get-SPVidCompVideos -Status 'Uploading')[0]
             $video.status | Should -Be 'Uploading'
         }
 
         It 'Should progress to Completed' {
-            Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Completed'
+            Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Completed'
 
-            $video = (Get-SPVidComp-Videos -Status 'Completed')[0]
+            $video = (Get-SPVidCompVideos -Status 'Completed')[0]
             $video.status | Should -Be 'Completed'
         }
 
         It 'Should set processing_completed timestamp on Completed' {
-            $video = (Get-SPVidComp-Videos -Status 'Completed')[0]
+            $video = (Get-SPVidCompVideos -Status 'Completed')[0]
 
             $video.processing_completed | Should -Not -BeNullOrEmpty
         }
@@ -213,7 +213,7 @@ Describe 'Archive Workflow' {
     It 'Should create archive with mirrored folder structure' {
         $archivePath = Join-Path -Path $Script:TestArchiveDir -ChildPath 'sites\TestSite\Documents\Videos\test.mp4'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:SourceFile -ArchivePath $archivePath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:SourceFile -ArchivePath $archivePath
 
         $result.Success | Should -BeTrue
         Test-Path -LiteralPath $archivePath | Should -BeTrue
@@ -222,7 +222,7 @@ Describe 'Archive Workflow' {
     It 'Should verify archive integrity with hash' {
         $archivePath = Join-Path -Path $Script:TestArchiveDir -ChildPath 'verified\test.mp4'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:SourceFile -ArchivePath $archivePath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:SourceFile -ArchivePath $archivePath
 
         $result.SourceHash | Should -Be $result.DestinationHash
     }
@@ -230,7 +230,7 @@ Describe 'Archive Workflow' {
     It 'Should handle deep nested paths' {
         $deepPath = Join-Path -Path $Script:TestArchiveDir -ChildPath 'a\b\c\d\e\f\g\deep.mp4'
 
-        $result = Copy-SPVidComp-Archive -SourcePath $Script:SourceFile -ArchivePath $deepPath
+        $result = Copy-SPVidCompArchive -SourcePath $Script:SourceFile -ArchivePath $deepPath
 
         $result.Success | Should -BeTrue
     }
@@ -242,7 +242,7 @@ Describe 'Archive Workflow' {
 Describe 'Filename Sanitization Workflow' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
     }
 
     AfterAll {
@@ -250,7 +250,7 @@ Describe 'Filename Sanitization Workflow' {
     }
 
     It 'Should handle valid filenames without modification' {
-        $result = Repair-SPVidComp-Filename -Filename 'normal-video-2024.mp4'
+        $result = Repair-SPVidCompFilename -Filename 'normal-video-2024.mp4'
 
         $result.Success | Should -BeTrue
         $result.Changed | Should -BeFalse
@@ -259,7 +259,7 @@ Describe 'Filename Sanitization Workflow' {
 
     It 'Should sanitize filenames with spaces' {
         # Spaces are valid, should not change
-        $result = Repair-SPVidComp-Filename -Filename 'video with spaces.mp4'
+        $result = Repair-SPVidCompFilename -Filename 'video with spaces.mp4'
 
         $result.Success | Should -BeTrue
         $result.SanitizedFilename | Should -Be 'video with spaces.mp4'
@@ -269,7 +269,7 @@ Describe 'Filename Sanitization Workflow' {
         # Null character is invalid everywhere
         $invalidName = "video`0name.mp4"
 
-        $result = Repair-SPVidComp-Filename -Filename $invalidName -Strategy 'Replace' -ReplacementChar '_'
+        $result = Repair-SPVidCompFilename -Filename $invalidName -Strategy 'Replace' -ReplacementChar '_'
 
         $result.Success | Should -BeTrue
         $result.Changed | Should -BeTrue
@@ -279,7 +279,7 @@ Describe 'Filename Sanitization Workflow' {
     It 'Should preserve file extension' {
         $invalidName = "bad`0name.mp4"
 
-        $result = Repair-SPVidComp-Filename -Filename $invalidName -Strategy 'Replace'
+        $result = Repair-SPVidCompFilename -Filename $invalidName -Strategy 'Replace'
 
         $result.SanitizedFilename | Should -Match '\.mp4$'
     }
@@ -291,13 +291,13 @@ Describe 'Filename Sanitization Workflow' {
 Describe 'Error Handling Workflow' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         # Add test video
         $video = Get-TestVideoRecord -Filename 'error-test.mp4'
-        Add-SPVidComp-Video @video
+        Add-SPVidCompVideo @video
 
-        $Script:TestVideo = (Get-SPVidComp-Videos)[0]
+        $Script:TestVideo = (Get-SPVidCompVideos)[0]
     }
 
     AfterAll {
@@ -305,34 +305,34 @@ Describe 'Error Handling Workflow' {
     }
 
     It 'Should mark video as Failed on error' {
-        Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Failed' -AdditionalFields @{
+        Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Failed' -AdditionalFields @{
             last_error = 'Download timeout'
             retry_count = 1
         }
 
-        $video = (Get-SPVidComp-Videos -Status 'Failed')[0]
+        $video = (Get-SPVidCompVideos -Status 'Failed')[0]
         $video.status | Should -Be 'Failed'
     }
 
     It 'Should store error message' {
-        $video = (Get-SPVidComp-Videos -Status 'Failed')[0]
+        $video = (Get-SPVidCompVideos -Status 'Failed')[0]
 
         $video.last_error | Should -Be 'Download timeout'
     }
 
     It 'Should increment retry count' {
-        $video = (Get-SPVidComp-Videos -Status 'Failed')[0]
+        $video = (Get-SPVidCompVideos -Status 'Failed')[0]
 
         $video.retry_count | Should -Be 1
     }
 
     It 'Should filter by MaxRetryCount' {
         # Update retry count to exceed limit
-        Update-SPVidComp-Status -VideoId $Script:TestVideo.id -Status 'Failed' -AdditionalFields @{
+        Update-SPVidCompStatus -VideoId $Script:TestVideo.id -Status 'Failed' -AdditionalFields @{
             retry_count = 5
         }
 
-        $videos = Get-SPVidComp-Videos -Status 'Failed' -MaxRetryCount 3
+        $videos = Get-SPVidCompVideos -Status 'Failed' -MaxRetryCount 3
 
         $videos | Should -BeNullOrEmpty
     }
@@ -344,7 +344,7 @@ Describe 'Error Handling Workflow' {
 Describe 'Statistics Workflow' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         # Add multiple videos with different statuses
         $videos = @(
@@ -356,7 +356,7 @@ Describe 'Statistics Workflow' {
 
         foreach ($v in $videos) {
             $record = Get-TestVideoRecord -Filename $v.Filename -Size $v.Size
-            Add-SPVidComp-Video @record
+            Add-SPVidCompVideo @record
 
             $id = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT id FROM videos WHERE filename = '$($v.Filename)'").id
 
@@ -376,32 +376,32 @@ Describe 'Statistics Workflow' {
     }
 
     It 'Should calculate total cataloged count' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalCataloged | Should -Be 4
     }
 
     It 'Should calculate total original size' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalOriginalSize | Should -Be 550000000  # 100 + 200 + 150 + 100
     }
 
     It 'Should calculate total compressed size' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $stats.TotalCompressedSize | Should -Be 130000000  # 50 + 80
     }
 
     It 'Should calculate space saved' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         # Original completed = 300 MB, Compressed = 130 MB, Saved = 170 MB
         $stats.SpaceSaved | Should -Be 170000000
     }
 
     It 'Should include status breakdown' {
-        $stats = Get-SPVidComp-Statistics
+        $stats = Get-SPVidCompStatistics
 
         $completed = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Completed' }
         $failed = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Failed' }
@@ -419,7 +419,7 @@ Describe 'Statistics Workflow' {
 Describe 'Resume Capability' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
         # Add videos in various states to simulate interrupted run
         $videos = @(
@@ -432,7 +432,7 @@ Describe 'Resume Capability' {
 
         foreach ($v in $videos) {
             $record = Get-TestVideoRecord -Filename $v.Filename
-            Add-SPVidComp-Video @record
+            Add-SPVidCompVideo @record
 
             if ($v.Status -ne 'Cataloged') {
                 $id = (Invoke-SqliteQuery -DataSource $Script:TestDbPath -Query "SELECT id FROM videos WHERE filename = '$($v.Filename)'").id
@@ -446,27 +446,27 @@ Describe 'Resume Capability' {
     }
 
     It 'Should find videos to process (Cataloged status)' {
-        $toProcess = Get-SPVidComp-Videos -Status 'Cataloged'
+        $toProcess = Get-SPVidCompVideos -Status 'Cataloged'
 
         $toProcess.Count | Should -Be 2
     }
 
     It 'Should find interrupted videos (Downloading status)' {
-        $interrupted = Get-SPVidComp-Videos -Status 'Downloading'
+        $interrupted = Get-SPVidCompVideos -Status 'Downloading'
 
         $interrupted.Count | Should -Be 1
         $interrupted[0].filename | Should -Be 'downloading.mp4'
     }
 
     It 'Should find interrupted videos (Compressing status)' {
-        $interrupted = Get-SPVidComp-Videos -Status 'Compressing'
+        $interrupted = Get-SPVidCompVideos -Status 'Compressing'
 
         $interrupted.Count | Should -Be 1
         $interrupted[0].filename | Should -Be 'compressing.mp4'
     }
 
     It 'Should not include completed videos in processing queue' {
-        $cataloged = Get-SPVidComp-Videos -Status 'Cataloged'
+        $cataloged = Get-SPVidCompVideos -Status 'Cataloged'
         $filenames = $cataloged | ForEach-Object { $_.filename }
 
         $filenames | Should -Not -Contain 'completed.mp4'
@@ -479,7 +479,7 @@ Describe 'Resume Capability' {
 Describe 'Configuration Persistence' {
     BeforeAll {
         $Script:TestDbPath = New-TestDatabase
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
     }
 
     AfterAll {
@@ -493,19 +493,19 @@ Describe 'Configuration Persistence' {
             'paths_temp_download' = 'C:\Temp\Test'
         }
 
-        Set-SPVidComp-Config -ConfigValues $config
+        Set-SPVidCompConfig -ConfigValues $config
 
         # Simulate script restart by reinitializing catalog
-        Initialize-SPVidComp-Catalog -DatabasePath $Script:TestDbPath
+        Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
-        $retrieved = Get-SPVidComp-Config
+        $retrieved = Get-SPVidCompConfig
 
         $retrieved['sharepoint_site_url'] | Should -Be 'https://test.sharepoint.com'
         $retrieved['compression_frame_rate'] | Should -Be '15'
     }
 
     It 'Should indicate config exists after saving' {
-        $result = Test-SPVidComp-ConfigExists
+        $result = Test-SPVidCompConfigExists
 
         $result | Should -BeTrue
     }
