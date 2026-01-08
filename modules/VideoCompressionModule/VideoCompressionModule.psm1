@@ -12,6 +12,287 @@ $privatePath = Join-Path -Path $PSScriptRoot -ChildPath 'Private'
 # Module-level variables
 $Script:Config = $null
 $Script:SharePointConnection = $null
+$Script:FFmpegPath = $null
+$Script:FFprobePath = $null
+$Script:FFmpegBinDir = Join-Path -Path $PSScriptRoot -ChildPath 'bin/ffmpeg'
+
+#------------------------------------------------------------------------------------------------------------------
+# Helper Function: New-SPVidComp-Directory
+# Purpose: DRY helper to ensure a directory exists, creating it if necessary
+#------------------------------------------------------------------------------------------------------------------
+function New-SPVidComp-Directory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            New-Item -ItemType Directory -Path $Path -Force -ErrorAction Stop | Out-Null
+            Write-SPVidComp-Log -Message "Created directory: $Path" -Level 'Debug'
+        }
+    }
+    catch {
+        Write-SPVidComp-Log -Message "Failed to create directory '$Path': $_" -Level 'Warning'
+        throw
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Helper Function: Get-SPVidComp-FFmpegPath
+# Purpose: Find ffmpeg executable (system PATH or downloaded)
+#------------------------------------------------------------------------------------------------------------------
+function Get-SPVidComp-FFmpegPath {
+    [CmdletBinding()]
+    param()
+
+    # Return cached path if available
+    if ($Script:FFmpegPath -and (Test-Path -LiteralPath $Script:FFmpegPath)) {
+        return $Script:FFmpegPath
+    }
+
+    # Check system PATH first
+    $systemFFmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($systemFFmpeg) {
+        $Script:FFmpegPath = $systemFFmpeg.Source
+        return $Script:FFmpegPath
+    }
+
+    # Check module bin directory
+    $exe = if ($IsWindows) { 'ffmpeg.exe' } else { 'ffmpeg' }
+    $modulePath = Join-Path -Path $Script:FFmpegBinDir -ChildPath $exe
+    if (Test-Path -LiteralPath $modulePath) {
+        $Script:FFmpegPath = $modulePath
+        return $Script:FFmpegPath
+    }
+
+    return $null
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Helper Function: Get-SPVidComp-FFprobePath
+# Purpose: Find ffprobe executable (system PATH or downloaded)
+#------------------------------------------------------------------------------------------------------------------
+function Get-SPVidComp-FFprobePath {
+    [CmdletBinding()]
+    param()
+
+    # Return cached path if available
+    if ($Script:FFprobePath -and (Test-Path -LiteralPath $Script:FFprobePath)) {
+        return $Script:FFprobePath
+    }
+
+    # Check system PATH first
+    $systemFFprobe = Get-Command ffprobe -ErrorAction SilentlyContinue
+    if ($systemFFprobe) {
+        $Script:FFprobePath = $systemFFprobe.Source
+        return $Script:FFprobePath
+    }
+
+    # Check module bin directory
+    $exe = if ($IsWindows) { 'ffprobe.exe' } else { 'ffprobe' }
+    $modulePath = Join-Path -Path $Script:FFmpegBinDir -ChildPath $exe
+    if (Test-Path -LiteralPath $modulePath) {
+        $Script:FFprobePath = $modulePath
+        return $Script:FFprobePath
+    }
+
+    return $null
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Install-SPVidComp-FFmpeg
+# Purpose: Download and install ffmpeg/ffprobe for current platform
+#------------------------------------------------------------------------------------------------------------------
+function Install-SPVidComp-FFmpeg {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [switch]$Force
+    )
+
+    try {
+        # Check if already installed (unless Force)
+        if (-not $Force) {
+            $ffmpegPath = Get-SPVidComp-FFmpegPath
+            $ffprobePath = Get-SPVidComp-FFprobePath
+            if ($ffmpegPath -and $ffprobePath) {
+                Write-SPVidComp-Log -Message "FFmpeg already available at: $ffmpegPath" -Level 'Info'
+                return @{
+                    Success = $true
+                    FFmpegPath = $ffmpegPath
+                    FFprobePath = $ffprobePath
+                    Downloaded = $false
+                }
+            }
+        }
+
+        Write-SPVidComp-Log -Message "Downloading FFmpeg for current platform..." -Level 'Info'
+
+        # Get download info for current platform
+        $downloadInfo = Get-SPVidComp-FFmpegDownloadInfo
+        if (-not $downloadInfo.Success) {
+            return @{
+                Success = $false
+                Error = $downloadInfo.Error
+            }
+        }
+
+        # Create bin directory
+        New-SPVidComp-Directory -Path $Script:FFmpegBinDir
+
+        # Download to temp location
+        $tempPath = [System.IO.Path]::GetTempPath()
+        $downloadPath = Join-Path -Path $tempPath -ChildPath $downloadInfo.Filename
+
+        Write-SPVidComp-Log -Message "Downloading from: $($downloadInfo.Url)" -Level 'Info'
+        Invoke-WebRequest -Uri $downloadInfo.Url -OutFile $downloadPath -UseBasicParsing -ErrorAction Stop
+
+        # Extract archive
+        Write-SPVidComp-Log -Message "Extracting FFmpeg..." -Level 'Info'
+
+        if ($downloadInfo.Filename -match '\.zip$') {
+            # Windows ZIP
+            Expand-Archive -Path $downloadPath -DestinationPath $tempPath -Force
+
+            # Find ffmpeg.exe and ffprobe.exe in extracted folder
+            $extractedDir = Join-Path -Path $tempPath -ChildPath ($downloadInfo.Filename -replace '\.zip$', '')
+            $ffmpegExe = Get-ChildItem -Path $extractedDir -Filter 'ffmpeg.exe' -Recurse | Select-Object -First 1
+            $ffprobeExe = Get-ChildItem -Path $extractedDir -Filter 'ffprobe.exe' -Recurse | Select-Object -First 1
+
+            if ($ffmpegExe) {
+                Copy-Item -LiteralPath $ffmpegExe.FullName -Destination (Join-Path -Path $Script:FFmpegBinDir -ChildPath 'ffmpeg.exe') -Force
+            }
+            if ($ffprobeExe) {
+                Copy-Item -LiteralPath $ffprobeExe.FullName -Destination (Join-Path -Path $Script:FFmpegBinDir -ChildPath 'ffprobe.exe') -Force
+            }
+
+            # Cleanup
+            Remove-Item -Path $extractedDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            # Linux/macOS tar.xz
+            $extractCmd = "tar -xJf `"$downloadPath`" -C `"$tempPath`""
+            Invoke-Expression $extractCmd
+
+            # Find ffmpeg and ffprobe in extracted folder
+            $extractedDir = Join-Path -Path $tempPath -ChildPath ($downloadInfo.Filename -replace '\.tar\.xz$', '')
+
+            Write-SPVidComp-Log -Message "Looking for binaries in: $extractedDir" -Level 'Debug'
+
+            # The archive structure might have binaries in a bin/ subdirectory
+            $ffmpegBin = Get-ChildItem -Path $extractedDir -Filter 'ffmpeg' -Recurse -File | Select-Object -First 1
+            $ffprobeBin = Get-ChildItem -Path $extractedDir -Filter 'ffprobe' -Recurse -File | Select-Object -First 1
+
+            if ($ffmpegBin) {
+                $destPath = Join-Path -Path $Script:FFmpegBinDir -ChildPath 'ffmpeg'
+                Write-SPVidComp-Log -Message "Copying ffmpeg from $($ffmpegBin.FullName) to $destPath" -Level 'Debug'
+                Copy-Item -LiteralPath $ffmpegBin.FullName -Destination $destPath -Force
+                & chmod +x $destPath 2>&1 | Out-Null
+            }
+            else {
+                Write-SPVidComp-Log -Message "ffmpeg binary not found in extracted archive" -Level 'Warning'
+            }
+
+            if ($ffprobeBin) {
+                $destPath = Join-Path -Path $Script:FFmpegBinDir -ChildPath 'ffprobe'
+                Write-SPVidComp-Log -Message "Copying ffprobe from $($ffprobeBin.FullName) to $destPath" -Level 'Debug'
+                Copy-Item -LiteralPath $ffprobeBin.FullName -Destination $destPath -Force
+                & chmod +x $destPath 2>&1 | Out-Null
+            }
+            else {
+                Write-SPVidComp-Log -Message "ffprobe binary not found in extracted archive" -Level 'Warning'
+            }
+
+            # Cleanup
+            Remove-Item -Path $extractedDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # Cleanup download
+        Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+
+        # Verify installation
+        $Script:FFmpegPath = $null
+        $Script:FFprobePath = $null
+        $ffmpegPath = Get-SPVidComp-FFmpegPath
+        $ffprobePath = Get-SPVidComp-FFprobePath
+
+        if ($ffmpegPath -and $ffprobePath) {
+            Write-SPVidComp-Log -Message "FFmpeg installed successfully to: $Script:FFmpegBinDir" -Level 'Info'
+            return @{
+                Success = $true
+                FFmpegPath = $ffmpegPath
+                FFprobePath = $ffprobePath
+                Downloaded = $true
+            }
+        }
+        else {
+            return @{
+                Success = $false
+                Error = "FFmpeg binaries not found after extraction"
+            }
+        }
+    }
+    catch {
+        Write-SPVidComp-Log -Message "Failed to install FFmpeg: $_" -Level 'Error'
+        return @{
+            Success = $false
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Helper Function: Get-SPVidComp-FFmpegDownloadInfo
+# Purpose: Get download URL and filename for current platform
+#------------------------------------------------------------------------------------------------------------------
+function Get-SPVidComp-FFmpegDownloadInfo {
+    [CmdletBinding()]
+    param()
+
+    try {
+        # Using GitHub BtbN/FFmpeg-Builds releases for consistency across platforms
+        # These are static builds that don't require additional dependencies
+
+        if ($IsWindows) {
+            return @{
+                Success = $true
+                Url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+                Filename = 'ffmpeg-master-latest-win64-gpl.zip'
+                Platform = 'Windows'
+            }
+        }
+        elseif ($IsLinux) {
+            return @{
+                Success = $true
+                Url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz'
+                Filename = 'ffmpeg-master-latest-linux64-gpl.tar.xz'
+                Platform = 'Linux'
+            }
+        }
+        elseif ($IsMacOS) {
+            return @{
+                Success = $true
+                Url = 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip'
+                Filename = 'ffmpeg-macos.zip'
+                Platform = 'macOS'
+            }
+        }
+        else {
+            return @{
+                Success = $false
+                Error = "Unsupported platform for automatic FFmpeg download"
+            }
+        }
+    }
+    catch {
+        return @{
+            Success = $false
+            Error = $_.Exception.Message
+        }
+    }
+}
 
 #------------------------------------------------------------------------------------------------------------------
 # Function: Initialize-SPVidComp-Config
@@ -159,6 +440,34 @@ function Connect-SPVidComp-SharePoint {
     catch {
         Write-SPVidComp-Log -Message "Failed to connect to SharePoint: $_" -Level 'Error'
         throw
+    }
+}
+
+#------------------------------------------------------------------------------------------------------------------
+# Function: Disconnect-SPVidComp-SharePoint
+# Purpose: Disconnect from SharePoint and cleanup connection
+#------------------------------------------------------------------------------------------------------------------
+function Disconnect-SPVidComp-SharePoint {
+    [CmdletBinding()]
+    param()
+
+    try {
+        if ($Script:SharePointConnection) {
+            Write-SPVidComp-Log -Message "Disconnecting from SharePoint..." -Level 'Info'
+            Disconnect-PnPOnline -Connection $Script:SharePointConnection -ErrorAction SilentlyContinue
+            $Script:SharePointConnection = $null
+            Write-SPVidComp-Log -Message "Successfully disconnected from SharePoint" -Level 'Info'
+            return $true
+        }
+        else {
+            Write-SPVidComp-Log -Message "No active SharePoint connection to disconnect" -Level 'Debug'
+            return $true
+        }
+    }
+    catch {
+        Write-SPVidComp-Log -Message "Error disconnecting from SharePoint: $_" -Level 'Warning'
+        $Script:SharePointConnection = $null
+        return $false
     }
 }
 
@@ -366,9 +675,7 @@ function Download-SPVidComp-Video {
 
         # Ensure destination directory exists
         $destDir = Split-Path -Path $DestinationPath -Parent
-        if (-not (Test-Path -LiteralPath $destDir)) {
-            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        }
+        New-SPVidComp-Directory -Path $destDir
 
         # Download file
         Get-PnPFile -Url $serverRelativeUrl -Path $destDir -FileName (Split-Path -Path $DestinationPath -Leaf) `
@@ -408,9 +715,7 @@ function Copy-SPVidComp-Archive {
 
         # Ensure archive directory exists
         $archiveDir = Split-Path -Path $ArchivePath -Parent
-        if (-not (Test-Path -LiteralPath $archiveDir)) {
-            New-Item -ItemType Directory -Path $archiveDir -Force | Out-Null
-        }
+        New-SPVidComp-Directory -Path $archiveDir
 
         # Copy file
         Copy-Item -LiteralPath $SourcePath -Destination $ArchivePath -Force -ErrorAction Stop
@@ -425,6 +730,7 @@ function Copy-SPVidComp-Archive {
                 ArchivePath = $ArchivePath
                 SourceHash = $verified.SourceHash
                 DestinationHash = $verified.DestinationHash
+                Error = $null
             }
         }
         else {
@@ -482,12 +788,15 @@ function Test-SPVidComp-ArchiveIntegrity {
             Success = $success
             SourceHash = $sourceHash
             DestinationHash = $destHash
+            Error = $null
         }
     }
     catch {
         Write-SPVidComp-Log -Message "Failed to verify archive integrity: $_" -Level 'Error'
         return @{
             Success = $false
+            SourceHash = $null
+            DestinationHash = $null
             Error = $_.Exception.Message
         }
     }
@@ -519,6 +828,17 @@ function Invoke-SPVidComp-Compression {
     try {
         Write-SPVidComp-Log -Message "Compressing video: $InputPath (timeout: $TimeoutMinutes minutes)" -Level 'Info'
 
+        # Get ffmpeg path
+        $ffmpegPath = Get-SPVidComp-FFmpegPath
+        if (-not $ffmpegPath) {
+            Write-SPVidComp-Log -Message "FFmpeg not found. Attempting automatic installation..." -Level 'Warning'
+            $installResult = Install-SPVidComp-FFmpeg
+            if (-not $installResult.Success) {
+                throw "FFmpeg not available and automatic installation failed: $($installResult.Error)"
+            }
+            $ffmpegPath = $installResult.FFmpegPath
+        }
+
         # Build ffmpeg command - Start-Process -ArgumentList handles quoting automatically
         $ffmpegArgs = @(
             '-y'                    # Auto-confirm file overwrites
@@ -531,7 +851,7 @@ function Invoke-SPVidComp-Compression {
             $OutputPath
         )
 
-        $ffmpegCommand = "ffmpeg $($ffmpegArgs -join ' ')"
+        $ffmpegCommand = "$ffmpegPath $($ffmpegArgs -join ' ')"
         Write-SPVidComp-Log -Message "Executing: $ffmpegCommand" -Level 'Debug'
 
         # Execute ffmpeg with timeout
@@ -539,7 +859,7 @@ function Invoke-SPVidComp-Compression {
 
         # Start process in background to allow timeout monitoring
         $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $processStartInfo.FileName = 'ffmpeg'
+        $processStartInfo.FileName = $ffmpegPath
         $processStartInfo.Arguments = $ffmpegArgs -join ' '
         $processStartInfo.RedirectStandardError = $true
         $processStartInfo.RedirectStandardOutput = $true
@@ -588,6 +908,7 @@ function Invoke-SPVidComp-Compression {
                 InputSize = $inputSize
                 OutputSize = $outputSize
                 CompressionRatio = $ratio
+                Error = $null
             }
         }
         else {
@@ -595,6 +916,9 @@ function Invoke-SPVidComp-Compression {
 
             return @{
                 Success = $false
+                InputSize = $null
+                OutputSize = $null
+                CompressionRatio = $null
                 Error = "ffmpeg exited with code $($process.ExitCode)"
                 ErrorLog = $errorOutput
             }
@@ -604,6 +928,9 @@ function Invoke-SPVidComp-Compression {
         Write-SPVidComp-Log -Message "Failed to compress video: $_" -Level 'Error'
         return @{
             Success = $false
+            InputSize = $null
+            OutputSize = $null
+            CompressionRatio = $null
             Error = $_.Exception.Message
         }
     }
@@ -623,6 +950,17 @@ function Test-SPVidComp-VideoIntegrity {
     try {
         Write-SPVidComp-Log -Message "Verifying video integrity: $VideoPath" -Level 'Debug'
 
+        # Get ffprobe path
+        $ffprobePath = Get-SPVidComp-FFprobePath
+        if (-not $ffprobePath) {
+            Write-SPVidComp-Log -Message "FFprobe not found. Attempting automatic installation..." -Level 'Warning'
+            $installResult = Install-SPVidComp-FFmpeg
+            if (-not $installResult.Success) {
+                throw "FFprobe not available and automatic installation failed: $($installResult.Error)"
+            }
+            $ffprobePath = $installResult.FFprobePath
+        }
+
         # Run ffprobe to check video - Start-Process -ArgumentList handles quoting automatically
         $ffprobeErrorLog = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "ffprobe-error.log"
 
@@ -634,7 +972,7 @@ function Test-SPVidComp-VideoIntegrity {
 
         # Start process with proper argument handling
         $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $processStartInfo.FileName = 'ffprobe'
+        $processStartInfo.FileName = $ffprobePath
         $processStartInfo.Arguments = $ffprobeArgs -join ' '
         $processStartInfo.RedirectStandardError = $true
         $processStartInfo.RedirectStandardOutput = $true
@@ -655,6 +993,7 @@ function Test-SPVidComp-VideoIntegrity {
             return @{
                 Success = $true
                 IsValid = $true
+                Error = $null
             }
         }
         else {
@@ -724,12 +1063,17 @@ function Test-SPVidComp-VideoLength {
             CompressedDuration = $compressedDuration
             Difference = $difference
             WithinTolerance = $withinTolerance
+            Error = $null
         }
     }
     catch {
         Write-SPVidComp-Log -Message "Failed to compare video lengths: $_" -Level 'Error'
         return @{
             Success = $false
+            OriginalDuration = $null
+            CompressedDuration = $null
+            Difference = $null
+            WithinTolerance = $false
             Error = $_.Exception.Message
         }
     }
@@ -747,7 +1091,14 @@ function Get-VideoDuration {
     )
 
     try {
-        $output = & ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "`"$VideoPath`"" 2>&1
+        # Get ffprobe path
+        $ffprobePath = Get-SPVidComp-FFprobePath
+        if (-not $ffprobePath) {
+            Write-SPVidComp-Log -Message "FFprobe not found for duration check" -Level 'Warning'
+            return $null
+        }
+
+        $output = & $ffprobePath -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "`"$VideoPath`"" 2>&1
 
         if ($LASTEXITCODE -eq 0) {
             return [double]$output
@@ -897,15 +1248,20 @@ function Test-SPVidComp-DiskSpace {
         }
 
         return @{
+            Success = $true
             HasSpace = $hasSpace
             FreeSpace = $freeSpace
             RequiredSpace = $RequiredBytes
+            Error = $null
         }
     }
     catch {
         Write-SPVidComp-Log -Message "Failed to check disk space: $_" -Level 'Warning'
         return @{
+            Success = $false
             HasSpace = $false
+            FreeSpace = $null
+            RequiredSpace = $RequiredBytes
             Error = $_.Exception.Message
         }
     }
@@ -1002,21 +1358,26 @@ function Test-SPVidComp-FilenameCharacters {
 
         if ($foundIllegal.Count -gt 0) {
             return @{
+                Success = $true
                 IsValid = $false
                 IllegalCharacters = $foundIllegal
                 OriginalFilename = $Filename
+                Error = $null
             }
         }
 
         return @{
+            Success = $true
             IsValid = $true
             IllegalCharacters = @()
             OriginalFilename = $Filename
+            Error = $null
         }
     }
     catch {
         Write-SPVidComp-Log -Message "Failed to test filename characters: $_" -Level 'Error'
         return @{
+            Success = $false
             IsValid = $false
             IllegalCharacters = @()
             OriginalFilename = $Filename
@@ -1052,6 +1413,7 @@ function Repair-SPVidComp-Filename {
                 OriginalFilename = $Filename
                 SanitizedFilename = $Filename
                 Changed = $false
+                Error = $null
             }
         }
 
@@ -1085,6 +1447,7 @@ function Repair-SPVidComp-Filename {
                     SanitizedFilename = $sanitized
                     Changed = $true
                     RemovedCharacters = $test.IllegalCharacters
+                    Error = $null
                 }
             }
             'Replace' {
@@ -1109,6 +1472,7 @@ function Repair-SPVidComp-Filename {
                     Changed = $true
                     ReplacedCharacters = $test.IllegalCharacters
                     ReplacementChar = $ReplacementChar
+                    Error = $null
                 }
             }
         }
@@ -1174,20 +1538,30 @@ function Test-SPVidComp-FFmpegAvailability {
         FFprobeAvailable = $false
         FFmpegVersion = $null
         FFprobeVersion = $null
+        FFmpegPath = $null
+        FFprobePath = $null
         AllAvailable = $false
         Errors = @()
     }
 
     try {
-        # Test ffmpeg
+        # Test ffmpeg using path helper (checks system PATH and module bin directory)
         try {
-            $ffmpegTest = & ffmpeg -version 2>&1 | Select-Object -First 1
-            if ($ffmpegTest -match 'ffmpeg version') {
-                $result.FFmpegAvailable = $true
-                if ($Detailed) {
-                    $result.FFmpegVersion = $ffmpegTest
+            $ffmpegPath = Get-SPVidComp-FFmpegPath
+            if ($ffmpegPath) {
+                $ffmpegTest = & $ffmpegPath -version 2>&1 | Select-Object -First 1
+                if ($ffmpegTest -match 'ffmpeg version') {
+                    $result.FFmpegAvailable = $true
+                    $result.FFmpegPath = $ffmpegPath
+                    if ($Detailed) {
+                        $result.FFmpegVersion = $ffmpegTest
+                    }
+                    Write-SPVidComp-Log -Message "ffmpeg is available at $ffmpegPath : $ffmpegTest" -Level 'Debug'
                 }
-                Write-SPVidComp-Log -Message "ffmpeg is available: $ffmpegTest" -Level 'Debug'
+            }
+            else {
+                $result.Errors += "ffmpeg not found in system PATH or module bin directory"
+                Write-SPVidComp-Log -Message "ffmpeg is not available" -Level 'Warning'
             }
         }
         catch {
@@ -1195,15 +1569,23 @@ function Test-SPVidComp-FFmpegAvailability {
             Write-SPVidComp-Log -Message "ffmpeg is not available: $_" -Level 'Warning'
         }
 
-        # Test ffprobe
+        # Test ffprobe using path helper (checks system PATH and module bin directory)
         try {
-            $ffprobeTest = & ffprobe -version 2>&1 | Select-Object -First 1
-            if ($ffprobeTest -match 'ffprobe version') {
-                $result.FFprobeAvailable = $true
-                if ($Detailed) {
-                    $result.FFprobeVersion = $ffprobeTest
+            $ffprobePath = Get-SPVidComp-FFprobePath
+            if ($ffprobePath) {
+                $ffprobeTest = & $ffprobePath -version 2>&1 | Select-Object -First 1
+                if ($ffprobeTest -match 'ffprobe version') {
+                    $result.FFprobeAvailable = $true
+                    $result.FFprobePath = $ffprobePath
+                    if ($Detailed) {
+                        $result.FFprobeVersion = $ffprobeTest
+                    }
+                    Write-SPVidComp-Log -Message "ffprobe is available at $ffprobePath : $ffprobeTest" -Level 'Debug'
                 }
-                Write-SPVidComp-Log -Message "ffprobe is available: $ffprobeTest" -Level 'Debug'
+            }
+            else {
+                $result.Errors += "ffprobe not found in system PATH or module bin directory"
+                Write-SPVidComp-Log -Message "ffprobe is not available" -Level 'Warning'
             }
         }
         catch {
@@ -1254,11 +1636,11 @@ function Set-SPVidComp-Config {
 }
 
 # Export public functions
-Export-ModuleMember -Function Initialize-SPVidComp-Config, Connect-SPVidComp-SharePoint, `
+Export-ModuleMember -Function Initialize-SPVidComp-Config, Connect-SPVidComp-SharePoint, Disconnect-SPVidComp-SharePoint, `
     Initialize-SPVidComp-Catalog, Add-SPVidComp-Video, Get-SPVidComp-Videos, Update-SPVidComp-Status, `
     Get-SPVidComp-Files, Download-SPVidComp-Video, Copy-SPVidComp-Archive, Test-SPVidComp-ArchiveIntegrity, `
     Invoke-SPVidComp-Compression, Test-SPVidComp-VideoIntegrity, Test-SPVidComp-VideoLength, `
     Upload-SPVidComp-Video, Write-SPVidComp-Log, Send-SPVidComp-Notification, Test-SPVidComp-DiskSpace, `
     Get-SPVidComp-Statistics, Test-SPVidComp-ConfigExists, Get-SPVidComp-Config, Set-SPVidComp-Config, `
     Get-SPVidComp-PlatformDefaults, Get-SPVidComp-IllegalCharacters, Test-SPVidComp-FilenameCharacters, `
-    Repair-SPVidComp-Filename, Test-SPVidComp-FFmpegAvailability
+    Repair-SPVidComp-Filename, Test-SPVidComp-FFmpegAvailability, Install-SPVidComp-FFmpeg

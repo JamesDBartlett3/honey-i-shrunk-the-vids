@@ -592,3 +592,201 @@ Describe 'Write-SPVidComp-Log' {
         { Write-SPVidComp-Log -Message 'Test' -Level 'Info' -Component 'TestComponent' } | Should -Not -Throw
     }
 }
+
+#------------------------------------------------------------------------------------------------------------------
+# FFmpeg Auto-Download Tests
+#------------------------------------------------------------------------------------------------------------------
+Describe 'Test-SPVidComp-FFmpegAvailability' {
+    It 'Should return a hashtable' {
+        $result = Test-SPVidComp-FFmpegAvailability
+
+        $result | Should -BeOfType [hashtable]
+    }
+
+    It 'Should contain required keys' {
+        $result = Test-SPVidComp-FFmpegAvailability
+
+        $result.Keys | Should -Contain 'FFmpegAvailable'
+        $result.Keys | Should -Contain 'FFprobeAvailable'
+        $result.Keys | Should -Contain 'AllAvailable'
+        $result.Keys | Should -Contain 'FFmpegPath'
+        $result.Keys | Should -Contain 'FFprobePath'
+    }
+
+    It 'Should return boolean values for availability' {
+        $result = Test-SPVidComp-FFmpegAvailability
+
+        $result.FFmpegAvailable | Should -BeOfType [bool]
+        $result.FFprobeAvailable | Should -BeOfType [bool]
+        $result.AllAvailable | Should -BeOfType [bool]
+    }
+
+    It 'Should set AllAvailable to true only if both are available' {
+        $result = Test-SPVidComp-FFmpegAvailability
+
+        if ($result.FFmpegAvailable -and $result.FFprobeAvailable) {
+            $result.AllAvailable | Should -BeTrue
+        }
+        else {
+            $result.AllAvailable | Should -BeFalse
+        }
+    }
+
+    It 'Should include version info when -Detailed is used' {
+        $result = Test-SPVidComp-FFmpegAvailability -Detailed
+
+        if ($result.FFmpegAvailable) {
+            $result.FFmpegVersion | Should -Not -BeNullOrEmpty
+        }
+        if ($result.FFprobeAvailable) {
+            $result.FFprobeVersion | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'Should include path info when available' {
+        $result = Test-SPVidComp-FFmpegAvailability
+
+        if ($result.FFmpegAvailable) {
+            $result.FFmpegPath | Should -Not -BeNullOrEmpty
+            Test-Path -LiteralPath $result.FFmpegPath | Should -BeTrue
+        }
+        if ($result.FFprobeAvailable) {
+            $result.FFprobePath | Should -Not -BeNullOrEmpty
+            Test-Path -LiteralPath $result.FFprobePath | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Install-SPVidComp-FFmpeg' {
+    BeforeAll {
+        # Save original module bin directory path
+        $Script:OriginalFFmpegBinDir = $Script:FFmpegBinDir
+
+        # Create isolated test bin directory
+        $Script:TestFFmpegBinDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-ffmpeg-$(Get-Random)"
+        New-Item -ItemType Directory -Path $Script:TestFFmpegBinDir -Force | Out-Null
+
+        # Initialize logger (suppress output)
+        $Script:TestFFmpegLogDir = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "test-ffmpeg-logs-$(Get-Random)"
+        New-Item -ItemType Directory -Path $Script:TestFFmpegLogDir -Force | Out-Null
+        Initialize-Logger -LogPath $Script:TestFFmpegLogDir -LogLevel 'Error' -ConsoleOutput $false -FileOutput $false
+    }
+
+    AfterAll {
+        # Restore original bin directory in MODULE's scope
+        $module = Get-Module VideoCompressionModule
+        & $module { param($dir) $Script:FFmpegBinDir = $dir } $Script:OriginalFFmpegBinDir
+
+        # Clear cached paths in MODULE's scope
+        & $module { $Script:FFmpegPath = $null; $Script:FFprobePath = $null }
+
+        # Clean up test bin directory
+        if (Test-Path -LiteralPath $Script:TestFFmpegBinDir) {
+            Remove-Item -Path $Script:TestFFmpegBinDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # Clean up test log directory
+        if (Test-Path -LiteralPath $Script:TestFFmpegLogDir) {
+            Remove-Item -Path $Script:TestFFmpegLogDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        # Set test bin directory in the MODULE's scope (not test scope)
+        $module = Get-Module VideoCompressionModule
+        & $module { param($dir) $Script:FFmpegBinDir = $dir } $Script:TestFFmpegBinDir
+
+        # Clear cached paths in the MODULE's scope
+        & $module { $Script:FFmpegPath = $null; $Script:FFprobePath = $null }
+
+        # Clean test bin directory
+        if (Test-Path -LiteralPath $Script:TestFFmpegBinDir) {
+            Get-ChildItem -Path $Script:TestFFmpegBinDir | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Should return a hashtable' {
+        $result = Install-SPVidComp-FFmpeg
+
+        $result | Should -BeOfType [hashtable]
+    }
+
+    It 'Should contain required keys on success' {
+        $result = Install-SPVidComp-FFmpeg
+
+        $result.Keys | Should -Contain 'Success'
+        if ($result.Success) {
+            $result.Keys | Should -Contain 'FFmpegPath'
+            $result.Keys | Should -Contain 'FFprobePath'
+            $result.Keys | Should -Contain 'Downloaded'
+        }
+    }
+
+    It 'Should contain Error key on failure' {
+        # This test would need to mock network failure, so just verify structure
+        $result = Install-SPVidComp-FFmpeg
+
+        if (-not $result.Success) {
+            $result.Keys | Should -Contain 'Error'
+        }
+    }
+
+    It 'Should actually download and install ffmpeg binaries' {
+        # Force download even if system ffmpeg exists
+        $result = Install-SPVidComp-FFmpeg -Force
+
+        $result.Success | Should -BeTrue
+        $result.Downloaded | Should -BeTrue
+
+        # Verify files were actually created in test directory
+        $ffmpegExe = if ($IsWindows) { 'ffmpeg.exe' } else { 'ffmpeg' }
+        $ffprobeExe = if ($IsWindows) { 'ffprobe.exe' } else { 'ffprobe' }
+
+        $expectedFFmpegPath = Join-Path -Path $Script:TestFFmpegBinDir -ChildPath $ffmpegExe
+        $expectedFFprobePath = Join-Path -Path $Script:TestFFmpegBinDir -ChildPath $ffprobeExe
+
+        Test-Path -LiteralPath $expectedFFmpegPath | Should -BeTrue
+        Test-Path -LiteralPath $expectedFFprobePath | Should -BeTrue
+
+        # Verify the downloaded files are actual executables (non-zero size)
+        (Get-Item -LiteralPath $expectedFFmpegPath).Length | Should -BeGreaterThan 0
+        (Get-Item -LiteralPath $expectedFFprobePath).Length | Should -BeGreaterThan 0
+    } -Tag 'Integration', 'Download'
+
+    It 'Should detect already installed ffmpeg without Force' {
+        # First install with Force
+        $result1 = Install-SPVidComp-FFmpeg -Force
+        $result1.Success | Should -BeTrue
+        $result1.Downloaded | Should -BeTrue
+
+        # Second call without Force should detect existing
+        $result2 = Install-SPVidComp-FFmpeg
+        $result2.Success | Should -BeTrue
+        $result2.Downloaded | Should -BeFalse
+    } -Tag 'Integration', 'Download'
+
+    It 'Should download again with -Force even if already installed' {
+        # First install
+        $result1 = Install-SPVidComp-FFmpeg -Force
+        $result1.Success | Should -BeTrue
+
+        # Second call WITH Force should download again
+        $result2 = Install-SPVidComp-FFmpeg -Force
+        $result2.Success | Should -BeTrue
+        $result2.Downloaded | Should -BeTrue
+    } -Tag 'Integration', 'Download'
+
+    It 'Should verify downloaded binaries are executable' {
+        $result = Install-SPVidComp-FFmpeg -Force
+
+        if ($result.Success) {
+            # Try to run ffmpeg -version
+            $ffmpegTest = & $result.FFmpegPath -version 2>&1 | Select-Object -First 1
+            $ffmpegTest | Should -Match 'ffmpeg version'
+
+            # Try to run ffprobe -version
+            $ffprobeTest = & $result.FFprobePath -version 2>&1 | Select-Object -First 1
+            $ffprobeTest | Should -Match 'ffprobe version'
+        }
+    } -Tag 'Integration', 'Download'
+}

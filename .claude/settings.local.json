@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwsh -Command \"Invoke-Pester -Path ''/mnt/c/AzDO/honey-i-shrunk-the-vids/tests/Private/EmailHelper.Tests.ps1'' -Output Detailed\")",
+      "Bash(pwsh:*)"
+    ]
+  }
+}

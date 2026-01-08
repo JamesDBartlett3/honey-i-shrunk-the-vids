@@ -21,6 +21,7 @@
     FunctionsToExport = @(
         'Initialize-SPVidComp-Config',
         'Connect-SPVidComp-SharePoint',
+        'Disconnect-SPVidComp-SharePoint',
         'Initialize-SPVidComp-Catalog',
         'Add-SPVidComp-Video',
         'Get-SPVidComp-Videos',
@@ -44,7 +45,8 @@
         'Test-SPVidComp-ConfigExists',
         'Get-SPVidComp-Config',
         'Set-SPVidComp-Config',
-        'Test-SPVidComp-FFmpegAvailability'
+        'Test-SPVidComp-FFmpegAvailability',
+        'Install-SPVidComp-FFmpeg'
     )
 
     # Cmdlets to export

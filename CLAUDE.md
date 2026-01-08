@@ -1,0 +1,1 @@
+- all custom functions must comply with the Verb-SPVidComp-Noun naming convention

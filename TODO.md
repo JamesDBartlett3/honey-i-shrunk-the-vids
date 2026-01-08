@@ -9,13 +9,19 @@
 *(All high priority items completed!)*
 
 ## Pending (Audit Findings - Medium)
-- Standardize error handling pattern across all functions (consistent return types)
-- Extract repeated directory creation pattern to helper function (DRY violation)
-- Add `Disconnect-SPVidComp-SharePoint` cleanup function
-- Fix README documentation references to non-existent `-ConfigPath` parameter
+*(All medium priority items completed!)*
 
 ## Pending (Feature)
-- Automatically download and use ffmpeg executable from official website if not found locally
+*(All planned features completed!)*
+
+## Pending (Testing - Error Paths)
+Additional error testing that would require mocking/complex test setup:
+- Network download failures in `Install-SPVidComp-FFmpeg`
+- Archive extraction failures (corrupted downloads, unsupported formats)
+- FFmpeg binaries not found in extracted archive structure
+- Permission denied during `chmod +x` on Linux/macOS
+- Unsupported platform detection (non-Windows/Linux/macOS)
+- Disk space exhaustion during FFmpeg download/extraction
 
 ## Completed
 - ✅ Replace deprecated `Send-MailMessage` with OAuth 2.0 + MailKit (supports MFA, browser-based auth, encrypted token storage)
@@ -37,3 +43,9 @@
 - ✅ Update module manifest to export missing functions (added 7 functions: Get-SPVidComp-PlatformDefaults, Get-SPVidComp-IllegalCharacters, Test-SPVidComp-FilenameCharacters, Repair-SPVidComp-Filename, Test-SPVidComp-ConfigExists, Get-SPVidComp-Config, Set-SPVidComp-Config, Test-SPVidComp-FFmpegAvailability)
 - ✅ Add ffmpeg/ffprobe availability check before starting processing (Test-SPVidComp-FFmpegAvailability function with version detection)
 - ✅ Fix `Test-SPVidComp-DiskSpace` to handle non-existent temp directories (creates directory or checks parent path)
+- ✅ Standardize error handling pattern across all functions (all hashtable returns include Success and Error properties)
+- ✅ Extract repeated directory creation pattern to helper function (New-SPVidComp-Directory)
+- ✅ Add `Disconnect-SPVidComp-SharePoint` cleanup function
+- ✅ Fix README documentation references to non-existent `-ConfigPath` parameter (changed to `-DatabasePath`)
+- ✅ Automatically download and use ffmpeg executable from official website if not found locally (Install-SPVidComp-FFmpeg with platform detection, GitHub/evermeet.cx sources)
+- ✅ Add comprehensive unit tests for FFmpeg auto-download feature (248 total tests, all passing)

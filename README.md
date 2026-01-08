@@ -391,7 +391,7 @@ The script checks for required disk space before processing. Increase `RequiredD
 Query failed videos:
 ```powershell
 Import-Module .\modules\VideoCompressionModule\VideoCompressionModule.psm1
-Initialize-SPVidComp-Config -ConfigPath ".\config\settings.json"
+Initialize-SPVidComp-Config -DatabasePath ".\data\video-catalog.db"
 $failed = Get-SPVidComp-Videos -Status 'Failed'
 $failed | Format-Table filename, last_error, retry_count
 ```
@@ -430,7 +430,7 @@ Import the module and use individual functions:
 Import-Module .\modules\VideoCompressionModule\VideoCompressionModule.psm1
 
 # Initialize
-Initialize-SPVidComp-Config -ConfigPath ".\config\settings.json"
+Initialize-SPVidComp-Config -DatabasePath ".\data\video-catalog.db"
 
 # Connect to SharePoint
 Connect-SPVidComp-SharePoint -SiteUrl "https://contoso.sharepoint.com/sites/Videos"
