@@ -1129,7 +1129,6 @@ function Send-SPVidCompVideo {
         $uri = [System.Uri]$SharePointUrl
         $serverRelativeUrl = $uri.AbsolutePath
         $folderPath = Split-Path -Path $serverRelativeUrl -Parent
-        $filename = Split-Path -Path $serverRelativeUrl -Leaf
 
         # Upload file (overwrite existing)
         Add-PnPFile -Path $LocalPath -Folder $folderPath -Connection $Script:SharePointConnection -ErrorAction Stop
