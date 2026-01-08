@@ -1294,25 +1294,22 @@ function Get-SPVidCompPlatformDefaults {
 
     $defaults = @{}
 
+    # Use cross-platform temp path
+    $systemTempPath = [System.IO.Path]::GetTempPath()
+    $defaults['TempPath'] = Join-Path -Path $systemTempPath -ChildPath 'VideoCompression'
+
+    # Platform-specific log paths (relative to module location)
     if ($IsWindows) {
-        $defaults['TempPath'] = 'C:\Temp\VideoCompression'
-        $defaults['ArchivePath'] = '\\NAS\Archive\Videos'
         $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '..\..\logs'
     }
     elseif ($IsMacOS) {
-        $defaults['TempPath'] = '/tmp/VideoCompression'
-        $defaults['ArchivePath'] = '/Volumes/NAS/Archive/Videos'
         $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '../../logs'
     }
     elseif ($IsLinux) {
-        $defaults['TempPath'] = '/tmp/VideoCompression'
-        $defaults['ArchivePath'] = '/mnt/nas/Archive/Videos'
         $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '../../logs'
     }
     else {
         # Fallback for unknown platforms
-        $defaults['TempPath'] = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'VideoCompression'
-        $defaults['ArchivePath'] = '/mnt/archive/Videos'
         $defaults['LogPath'] = Join-Path -Path $PSScriptRoot -ChildPath '../../logs'
     }
 

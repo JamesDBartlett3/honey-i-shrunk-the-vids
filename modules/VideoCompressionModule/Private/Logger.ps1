@@ -111,6 +111,11 @@ function Write-LogEntry {
     # Write to file
     if ($Script:LogConfig.FileOutput -and $Script:LogConfig.LogPath) {
         try {
+            # Ensure log directory exists
+            if (-not (Test-Path -LiteralPath $Script:LogConfig.LogPath)) {
+                New-Item -ItemType Directory -Path $Script:LogConfig.LogPath -Force -ErrorAction Stop | Out-Null
+            }
+
             $logFile = Join-Path -Path $Script:LogConfig.LogPath -ChildPath "video-compression-$(Get-Date -Format 'yyyyMMdd').log"
 
             # Check log file size and rotate if needed

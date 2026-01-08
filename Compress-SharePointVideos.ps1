@@ -146,15 +146,15 @@ function Initialize-Configuration {
 
     # SharePoint Settings
     Write-Host "`n--- SharePoint Settings ---" -ForegroundColor Cyan
-    $config['sharepoint_site_url'] = Read-UserInput -Prompt "SharePoint Site URL" -DefaultValue "https://contoso.sharepoint.com/sites/YourSite" -Required
-    $config['sharepoint_library_name'] = Read-UserInput -Prompt "Library Name" -DefaultValue "Documents" -Required
+    $config['sharepoint_site_url'] = Read-UserInput -Prompt "SharePoint Site URL (e.g., https://contoso.sharepoint.com/sites/YourSite)" -Required
+    $config['sharepoint_library_name'] = Read-UserInput -Prompt "Library Name (e.g., Documents, Videos, Shared Documents)" -Required
     $config['sharepoint_folder_path'] = Read-UserInput -Prompt "Folder Path (optional, e.g., /Videos)" -DefaultValue ""
     $config['sharepoint_recursive'] = (Read-YesNo -Prompt "Scan subfolders recursively?" -DefaultValue $true).ToString()
 
     # Paths - Platform-aware defaults
     Write-Host "`n--- File Paths ---" -ForegroundColor Cyan
     $config['paths_temp_download'] = Read-UserInput -Prompt "Temp Download Path" -DefaultValue $platformDefaults['TempPath'] -Required
-    $config['paths_external_archive'] = Read-UserInput -Prompt "External Archive Path" -DefaultValue $platformDefaults['ArchivePath'] -Required
+    $config['paths_external_archive'] = Read-UserInput -Prompt "External Archive Path (where originals will be stored)" -Required
     $config['paths_log'] = Read-UserInput -Prompt "Log Path" -DefaultValue $platformDefaults['LogPath'] -Required
 
     # Compression Settings
@@ -181,16 +181,17 @@ function Initialize-Configuration {
     $config['email_enabled'] = $emailEnabled.ToString()
 
     if ($emailEnabled) {
-        $config['email_smtp_server'] = Read-UserInput -Prompt "SMTP Server" -DefaultValue "smtp.office365.com" -Required
+        $config['email_smtp_server'] = Read-UserInput -Prompt "SMTP Server (e.g., smtp.office365.com or smtp.gmail.com)" -Required
         $config['email_smtp_port'] = Read-UserInput -Prompt "SMTP Port" -DefaultValue "587"
         $config['email_use_ssl'] = (Read-YesNo -Prompt "Use SSL?" -DefaultValue $true).ToString()
-        $config['email_from'] = Read-UserInput -Prompt "From Address" -DefaultValue "automation@contoso.com" -Required
-        $config['email_to'] = Read-UserInput -Prompt "To Addresses (comma-separated)" -DefaultValue "admin@contoso.com" -Required
+        $config['email_from'] = Read-UserInput -Prompt "From Address" -Required
+        $config['email_to'] = Read-UserInput -Prompt "To Addresses (comma-separated)" -Required
         $config['email_send_on_completion'] = (Read-YesNo -Prompt "Send email on completion?" -DefaultValue $true).ToString()
         $config['email_send_on_error'] = (Read-YesNo -Prompt "Send email on error?" -DefaultValue $true).ToString()
     }
     else {
-        $config['email_smtp_server'] = 'smtp.office365.com'
+        # Email disabled - set empty/default values
+        $config['email_smtp_server'] = ''
         $config['email_smtp_port'] = '587'
         $config['email_use_ssl'] = 'True'
         $config['email_from'] = ''

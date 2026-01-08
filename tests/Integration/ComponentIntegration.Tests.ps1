@@ -249,13 +249,12 @@ Describe 'Configuration Affects System Behavior' {
 
     Context 'Database configuration persistence' {
         It 'Should persist and retrieve config values that affect other systems' {
-            # Set multiple configuration values
-            $configValues = @{
-                'logging_log_level' = 'Debug'
-                'email_enabled' = 'true'
-                'compression_timeout_minutes' = '30'
-                'paths_temp_download' = '/tmp/videos'
-            }
+            # Set complete configuration
+            $configValues = Get-TestConfig
+            $configValues['logging_log_level'] = 'Debug'
+            $configValues['email_enabled'] = 'True'
+            $configValues['compression_timeout_minutes'] = '30'
+            $configValues['paths_temp_download'] = '/tmp/videos'
 
             Set-SPVidCompConfig -ConfigValues $configValues
 
@@ -263,15 +262,15 @@ Describe 'Configuration Affects System Behavior' {
             $retrieved = Get-SPVidCompConfig
 
             $retrieved['logging_log_level'] | Should -Be 'Debug'
-            $retrieved['email_enabled'] | Should -Be 'true'
+            $retrieved['email_enabled'] | Should -Be 'True'
             $retrieved['compression_timeout_minutes'] | Should -Be '30'
             $retrieved['paths_temp_download'] | Should -Be '/tmp/videos'
         }
 
         It 'Should persist config across database reinitializations' {
-            $configValues = @{
-                'test_persistence_key' = 'persistence_value'
-            }
+            # First set a complete config
+            $configValues = Get-TestConfig
+            $configValues['sharepoint_site_url'] = 'https://persistence-test.sharepoint.com'
 
             Set-SPVidCompConfig -ConfigValues $configValues
 
@@ -279,7 +278,7 @@ Describe 'Configuration Affects System Behavior' {
             Initialize-SPVidCompCatalog -DatabasePath $Script:TestDbPath
 
             $retrieved = Get-SPVidCompConfig
-            $retrieved['test_persistence_key'] | Should -Be 'persistence_value'
+            $retrieved['sharepoint_site_url'] | Should -Be 'https://persistence-test.sharepoint.com'
         }
     }
 }

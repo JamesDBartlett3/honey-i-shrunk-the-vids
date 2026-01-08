@@ -487,11 +487,10 @@ Describe 'Configuration Persistence' {
     }
 
     It 'Should persist configuration across reinitializations' {
-        $config = @{
-            'sharepoint_site_url' = 'https://test.sharepoint.com'
-            'compression_frame_rate' = '15'
-            'paths_temp_download' = 'C:\Temp\Test'
-        }
+        $config = Get-TestConfig
+        $config['sharepoint_site_url'] = 'https://test.sharepoint.com'
+        $config['compression_frame_rate'] = '15'
+        $config['paths_temp_download'] = 'C:\Temp\Test'
 
         Set-SPVidCompConfig -ConfigValues $config
 

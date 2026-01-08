@@ -45,13 +45,6 @@ Describe 'Get-SPVidCompPlatformDefaults' {
         $defaults.TempPath | Should -Not -BeNullOrEmpty
     }
 
-    It 'Should contain ArchivePath key' {
-        $defaults = Get-SPVidCompPlatformDefaults
-
-        $defaults.Keys | Should -Contain 'ArchivePath'
-        $defaults.ArchivePath | Should -Not -BeNullOrEmpty
-    }
-
     It 'Should contain LogPath key' {
         $defaults = Get-SPVidCompPlatformDefaults
 
@@ -542,8 +535,40 @@ Describe 'Configuration Functions' {
 
         It 'Should store configuration values' {
             $config = @{
-                'test_key_1' = 'value1'
-                'test_key_2' = 'value2'
+                'sharepoint_site_url' = 'https://test.sharepoint.com'
+                'sharepoint_library_name' = 'Documents'
+                'sharepoint_folder_path' = '/Videos'
+                'sharepoint_recursive' = 'True'
+                'paths_temp_download' = '/tmp/test'
+                'paths_external_archive' = '/tmp/archive'
+                'paths_log' = '/tmp/logs'
+                'compression_frame_rate' = '10'
+                'compression_video_codec' = 'libx265'
+                'compression_timeout_minutes' = '60'
+                'processing_retry_attempts' = '3'
+                'processing_required_disk_space_gb' = '50'
+                'processing_duration_tolerance_seconds' = '1'
+                'resume_enable' = 'True'
+                'resume_skip_processed' = 'True'
+                'resume_reprocess_failed' = 'True'
+                'email_enabled' = 'False'
+                'email_smtp_server' = 'smtp.test.com'
+                'email_smtp_port' = '587'
+                'email_use_ssl' = 'True'
+                'email_from' = 'test@test.com'
+                'email_to' = 'admin@test.com'
+                'email_send_on_completion' = 'True'
+                'email_send_on_error' = 'True'
+                'logging_log_level' = 'Info'
+                'logging_console_output' = 'False'
+                'logging_file_output' = 'True'
+                'logging_max_log_size_mb' = '100'
+                'logging_log_retention_days' = '30'
+                'advanced_cleanup_temp_files' = 'True'
+                'advanced_verify_checksums' = 'True'
+                'advanced_dry_run' = 'False'
+                'illegal_char_strategy' = 'Replace'
+                'illegal_char_replacement' = '_'
             }
 
             $result = Set-SPVidCompConfig -ConfigValues $config
@@ -552,14 +577,12 @@ Describe 'Configuration Functions' {
         }
 
         It 'Should retrieve stored configuration' {
-            $config = @{
-                'retrieve_test' = 'test_value'
-            }
-            Set-SPVidCompConfig -ConfigValues $config
-
             $retrieved = Get-SPVidCompConfig
 
             $retrieved | Should -Not -BeNullOrEmpty
+            $retrieved['sharepoint_site_url'] | Should -Be 'https://test.sharepoint.com'
+            $retrieved['compression_frame_rate'] | Should -Be '10'
+            $retrieved['email_enabled'] | Should -Be 'False'
         }
     }
 }
