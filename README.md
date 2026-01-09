@@ -2,6 +2,8 @@
 
 Automate the process of scanning SharePoint for MP4 videos, compressing them using ffmpeg, and archiving originals to external storage with comprehensive verification.
 
+![Honey I Shrunk the Vids](honey-i-shrunk-the-vids.png)
+
 ## Features
 
 - **Cross-Platform Compatible**: Runs on Windows, macOS, and Linux (PowerShell 7.0+)
