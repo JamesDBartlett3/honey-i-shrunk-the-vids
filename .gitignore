@@ -7,6 +7,9 @@
 # Local settings
 .claude/settings.local.json
 
+# FFmpeg binaries (downloaded at runtime)
+modules/VideoCompressionModule/bin/
+
 # Temp files
 *.tmp
 *.temp
