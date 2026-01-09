@@ -17,8 +17,21 @@ function Get-SPVidCompDiscoverTenantSites {
     )
 
     try {
+        # Ensure PnP.PowerShell module is available
+        if (-not (Get-Module -ListAvailable -Name PnP.PowerShell)) {
+            Write-Host "PnP.PowerShell module not found. Installing..." -ForegroundColor Yellow
+            Install-Module -Name PnP.PowerShell -Scope CurrentUser -Force -AllowClobber
+        }
+        if (-not (Get-Module -Name PnP.PowerShell)) {
+            Import-Module PnP.PowerShell -ErrorAction Stop
+        }
+
         Write-Host "Connecting to SharePoint Admin Center..." -ForegroundColor Yellow
-        Connect-PnPOnline -Url $AdminSiteUrl -Interactive -ErrorAction Stop
+        Write-Host "A browser window will open for authentication..." -ForegroundColor Gray
+        Write-Host ""
+
+        # Use PnP Management Shell app (requires admin consent in tenant)
+        Connect-PnPOnline -Url $AdminSiteUrl -Interactive -ClientId "31359c7f-bd7e-475c-86db-fdb8c937548e" -ErrorAction Stop
 
         Write-Host "Discovering sites in tenant..." -ForegroundColor Yellow
         $sites = Get-PnPTenantSite -Detailed -ErrorAction Stop
@@ -69,8 +82,21 @@ function Get-SPVidCompDiscoverSiteLibraries {
     )
 
     try {
+        # Ensure PnP.PowerShell module is available
+        if (-not (Get-Module -ListAvailable -Name PnP.PowerShell)) {
+            Write-Host "PnP.PowerShell module not found. Installing..." -ForegroundColor Yellow
+            Install-Module -Name PnP.PowerShell -Scope CurrentUser -Force -AllowClobber
+        }
+        if (-not (Get-Module -Name PnP.PowerShell)) {
+            Import-Module PnP.PowerShell -ErrorAction Stop
+        }
+
         Write-Host "Connecting to site: $SiteUrl" -ForegroundColor Yellow
-        Connect-PnPOnline -Url $SiteUrl -Interactive -ErrorAction Stop
+        Write-Host "A browser window will open for authentication..." -ForegroundColor Gray
+        Write-Host ""
+
+        # Use PnP Management Shell app (requires admin consent in tenant)
+        Connect-PnPOnline -Url $SiteUrl -Interactive -ClientId "31359c7f-bd7e-475c-86db-fdb8c937548e" -ErrorAction Stop
 
         Write-Host "Discovering libraries..." -ForegroundColor Yellow
         $lists = Get-PnPList -ErrorAction Stop

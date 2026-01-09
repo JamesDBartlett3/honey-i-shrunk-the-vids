@@ -15,9 +15,9 @@
       "Bash(Write-Host \"\"Context blocks: $contexts\"\")",
       "Bash(Write-Host \"\"It blocks: $its\"\")",
       "Bash(Write-Host \"\"Total test cases: $its\"\")",
-      "Bash(})",
-      "Bash(\")",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(Remove-Item -Path \"/mnt/c/AzDO/honey-i-shrunk-the-vids/data/video-catalog.db\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(Write-Host \"Database deleted. Run setup again.\")"
     ]
   }
 }

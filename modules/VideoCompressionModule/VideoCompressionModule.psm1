@@ -426,9 +426,12 @@ function Connect-SPVidCompSharePoint {
         # Import module
         Import-Module PnP.PowerShell -ErrorAction Stop
 
-        # Connect to SharePoint
+        # Connect to SharePoint using PnP Management Shell app (requires admin consent in tenant)
+        # Admin consent URL: https://login.microsoftonline.com/common/adminconsent?client_id=31359c7f-bd7e-475c-86db-fdb8c937548e
         Write-SPVidCompLog -Message "Connecting to SharePoint: $SiteUrl" -Level 'Info'
-        $Script:SharePointConnection = Connect-PnPOnline -Url $SiteUrl -Interactive -ReturnConnection -ErrorAction Stop
+        Write-SPVidCompLog -Message "A browser window will open for authentication..." -Level 'Info'
+
+        $Script:SharePointConnection = Connect-PnPOnline -Url $SiteUrl -Interactive -ClientId "31359c7f-bd7e-475c-86db-fdb8c937548e" -ReturnConnection -ErrorAction Stop
 
         Write-SPVidCompLog -Message "Successfully connected to SharePoint" -Level 'Info'
         return $Script:SharePointConnection
