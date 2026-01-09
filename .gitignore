@@ -1,0 +1,22 @@
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Local settings
+.claude/settings.local.json
+
+# Temp files
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# PowerShell logs
+*.log
+
+# Test output
+/tmp/
