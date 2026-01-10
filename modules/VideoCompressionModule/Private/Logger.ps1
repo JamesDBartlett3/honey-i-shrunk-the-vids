@@ -49,8 +49,19 @@ function Initialize-SPVidCompLogger {
         $Script:LogConfig.LogRetentionDays = $LogRetentionDays
 
         # Set error log path (for database failures only)
+        # Default to 'logs' folder relative to database location
         if (-not $ErrorLogPath) {
-            $ErrorLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'VideoCompressionErrors'
+            $dbDirectory = Split-Path -Path $DatabasePath -Parent
+            if ($dbDirectory) {
+                $rootDirectory = Split-Path -Path $dbDirectory -Parent
+                if ($rootDirectory) {
+                    $ErrorLogPath = Join-Path -Path $rootDirectory -ChildPath 'logs'
+                }
+            }
+            # Ultimate fallback if path calculation fails
+            if (-not $ErrorLogPath) {
+                $ErrorLogPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath 'VideoCompressionErrors'
+            }
         }
         $Script:LogConfig.ErrorLogPath = $ErrorLogPath
 
@@ -59,10 +70,40 @@ function Initialize-SPVidCompLogger {
             New-Item -ItemType Directory -Path $ErrorLogPath -Force -ErrorAction SilentlyContinue | Out-Null
         }
 
-        Write-SPVidCompLogEntry -Message "Logger initialized successfully (database-based logging)" -Level 'Info'
+        # Test database logging to verify it's working
+        $testId = [guid]::NewGuid().ToString()
+        $testMessage = "Logger initialization test - $testId"
+
+        try {
+            # Try to write test entry
+            $writeSuccess = Add-SPVidCompLogEntry -Message $testMessage -Level 'Debug' -Component 'LoggerInit'
+
+            if ($writeSuccess) {
+                # Try to read it back
+                Start-Sleep -Milliseconds 100  # Brief pause to ensure write is committed
+                $readBack = Get-SPVidCompLogEntries -Limit 1 | Where-Object { $_.message -like "*$testId*" }
+
+                if ($readBack) {
+                    # Database logging is working properly
+                    Write-SPVidCompLogEntry -Message "Logger initialized successfully (database-based logging)" -Level 'Info'
+                }
+                else {
+                    throw "Could not read back test log entry from database"
+                }
+            }
+            else {
+                throw "Could not write test log entry to database"
+            }
+        }
+        catch {
+            # Database logging is not working - warn user
+            Write-Warning "DATABASE LOGGING IS NOT WORKING: $_"
+            Write-Warning "Logs will be written to fallback file location: $ErrorLogPath"
+            Write-SPVidCompErrorLogFile -Message "Logger initialized with database logging DISABLED (fallback mode). Database test failed: $_"
+        }
     }
     catch {
-        # If logger initialization fails, write to error file
+        # If logger initialization fails completely, write to error file
         Write-SPVidCompErrorLogFile -Message "Failed to initialize logger: $_"
         throw
     }
@@ -140,8 +181,8 @@ function Write-SPVidCompErrorLogFile {
 
     try {
         if (-not $Script:LogConfig.ErrorLogPath) {
-            # No error log path configured, output to console as last resort
-            Write-Warning "DATABASE LOGGING FAILED - No error log path configured. Message: $Message"
+            # No error log path configured - warn user
+            Write-Warning "DATABASE LOGGING FAILED and no error log path is configured. Message: $Message"
             return
         }
 
@@ -156,12 +197,11 @@ function Write-SPVidCompErrorLogFile {
 
         Add-Content -LiteralPath $errorLogFile -Value $entry -ErrorAction Stop
 
-        # Notify user where to find error log
-        Write-Warning "DATABASE LOGGING FAILED - Error logged to: $errorLogFile"
+        # Fallback logging successful - no warning needed (working as designed)
     }
     catch {
-        # Ultimate fallback - can't even write to error log file
-        Write-Warning "CRITICAL: Cannot write to database OR error log file. Message: $Message. Error: $_"
+        # Ultimate fallback - can't write to database OR error log file
+        Write-Warning "CRITICAL: Cannot write to database OR error log file at '$($Script:LogConfig.ErrorLogPath)'. Message: $Message. Error: $_"
     }
 }
 

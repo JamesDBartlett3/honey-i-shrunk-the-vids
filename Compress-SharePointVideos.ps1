@@ -107,6 +107,33 @@ function Get-SPVidCompConfigValue {
     throw "Configuration key '$Key' not found and no default value provided"
 }
 
+function Test-SPVidCompFileIsLocked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+
+    try {
+        # Try to open the file with exclusive read/write access
+        # If another process has it locked (like ffmpeg writing to it), this will fail
+        $fileStream = [System.IO.File]::Open(
+            $FilePath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+
+        # If we got here, file is NOT locked - close it immediately
+        $fileStream.Close()
+        $fileStream.Dispose()
+        return $false  # File is NOT locked (ready to use)
+    }
+    catch {
+        # File is locked by another process
+        return $true  # File IS locked (still being written)
+    }
+}
+
 function Show-SPVidCompCurrentConfig {
     param([hashtable]$Config)
 
@@ -752,6 +779,10 @@ if ($Phase -in @('Process', 'Both')) {
                                     $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Completed'
                                     Write-Host "  Uploaded successfully" -ForegroundColor Green
                                     $processedCount++
+
+                                    # Only cleanup temp files after successful upload
+                                    if (Test-Path $jobResult.TempOriginal) { Remove-Item $jobResult.TempOriginal -Force -ErrorAction SilentlyContinue }
+                                    if (Test-Path $jobResult.TempCompressed) { Remove-Item $jobResult.TempCompressed -Force -ErrorAction SilentlyContinue }
                                 }
                                 else {
                                     throw "Upload failed"
@@ -759,16 +790,12 @@ if ($Phase -in @('Process', 'Both')) {
                             }
                             catch {
                                 Write-Host "  Upload FAILED: $_" -ForegroundColor Red
+                                Write-Host "  Files preserved in temp folder for retry" -ForegroundColor Yellow
                                 $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Failed' -AdditionalFields @{
                                     last_error = "Upload failed: $($_.Exception.Message)"
                                     retry_count = $jobResult.RetryCount + 1
                                 }
                                 $failedCount++
-                            }
-                            finally {
-                                # Cleanup temp files
-                                if (Test-Path $jobResult.TempOriginal) { Remove-Item $jobResult.TempOriginal -Force -ErrorAction SilentlyContinue }
-                                if (Test-Path $jobResult.TempCompressed) { Remove-Item $jobResult.TempCompressed -Force -ErrorAction SilentlyContinue }
                             }
                         }
                         else {
@@ -924,9 +951,8 @@ if ($Phase -in @('Process', 'Both')) {
                             retry_count = $Video.retry_count + 1
                         }
 
-                        # Cleanup on failure
-                        if (Test-Path $TempOriginal) { Remove-Item $TempOriginal -Force -ErrorAction SilentlyContinue }
-                        if (Test-Path $TempCompressed) { Remove-Item $TempCompressed -Force -ErrorAction SilentlyContinue }
+                        # DO NOT cleanup on failure - preserve files for manual inspection/retry
+                        # Files will remain in temp folder for debugging
 
                         return @{
                             Success = $false
@@ -984,14 +1010,33 @@ if ($Phase -in @('Process', 'Both')) {
             (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
         })
 
+        $ellipsisCounter = 0
         while ($compressionJobs.Count -gt 0) {
             $systemRunningJobIds = (Get-Job -State Running).Id
             $systemCompletedJobIds = (Get-Job -State Completed).Id
 
-            $runningCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemRunningJobIds }).Count
-            $pendingUploadCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemCompletedJobIds -and -not $_.Uploaded }).Count
-            if ($runningCount -gt 0 -or $pendingUploadCount -gt 0) {
-                Write-Host "  Status: $runningCount compressing, $pendingUploadCount ready to upload" -ForegroundColor Cyan
+            # Check all compressed files and categorize them
+            $compressedFiles = Get-ChildItem -Path $tempPath -Filter "*_compressed.mp4" -ErrorAction SilentlyContinue
+            $readyToUploadCount = 0
+            $compressingCount = 0
+
+            foreach ($file in $compressedFiles) {
+                # Check if file is locked by ffmpeg (still being written)
+                $isLocked = Test-SPVidCompFileIsLocked -FilePath $file.FullName
+                if ($isLocked) {
+                    $compressingCount++  # Still being written
+                } else {
+                    $readyToUploadCount++  # Complete and ready to upload
+                }
+            }
+
+            if ($compressingCount -gt 0 -or $readyToUploadCount -gt 0) {
+                # Animated ellipsis: cycles through ".", "..", "..."
+                $ellipsis = "." * (($ellipsisCounter % 3) + 1)
+                $ellipsisCounter++
+
+                # Overwrite current line with carriage return
+                Write-Host "`r  Status: $compressingCount compressing, $readyToUploadCount ready to upload$ellipsis   " -NoNewline -ForegroundColor Cyan
             }
 
             # Check for hung jobs (timeout + 5 minute buffer for archive/verify)
@@ -1003,7 +1048,9 @@ if ($Phase -in @('Process', 'Both')) {
             }
 
             foreach ($hungJob in $hungJobs) {
-                Write-Host "`n  WARNING: Job $($hungJob.Job.Id) for $($hungJob.Video.filename) exceeded timeout. Killing job..." -ForegroundColor Red
+                # Clear status line before printing warning
+                Write-Host "`r                                                                                     "
+                Write-Host "  WARNING: Job $($hungJob.Job.Id) for $($hungJob.Video.filename) exceeded timeout. Killing job..." -ForegroundColor Red
                 Stop-Job -Job $hungJob.Job
                 $null = Update-SPVidCompStatus -VideoId $hungJob.Video.id -Status 'Failed' -AdditionalFields @{
                     last_error = "Job timeout: exceeded $maxJobRuntime seconds"
@@ -1021,7 +1068,9 @@ if ($Phase -in @('Process', 'Both')) {
                 $job.State = 'Completed'
                 $jobResult = Receive-Job -Job $job.Job
 
-                Write-Host "`n[Job Completed] $($job.Video.filename)" -ForegroundColor Cyan
+                # Clear status line before printing job completion
+                Write-Host "`r                                                                                     "
+                Write-Host "[Job Completed] $($job.Video.filename)" -ForegroundColor Cyan
                 Write-Host "  Success: $($jobResult.Success)" -ForegroundColor $(if ($jobResult.Success) { 'Green' } else { 'Red' })
                 if (-not $jobResult.Success) {
                     Write-Host "  Error: $($jobResult.Error)" -ForegroundColor Red
@@ -1038,6 +1087,10 @@ if ($Phase -in @('Process', 'Both')) {
                             $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Completed'
                             Write-Host "  Uploaded successfully (Ratio: $($jobResult.CompressionRatio))" -ForegroundColor Green
                             $processedCount++
+
+                            # Only cleanup temp files after successful upload
+                            if (Test-Path $jobResult.TempOriginal) { Remove-Item $jobResult.TempOriginal -Force -ErrorAction SilentlyContinue }
+                            if (Test-Path $jobResult.TempCompressed) { Remove-Item $jobResult.TempCompressed -Force -ErrorAction SilentlyContinue }
                         }
                         else {
                             throw "Upload failed"
@@ -1045,15 +1098,12 @@ if ($Phase -in @('Process', 'Both')) {
                     }
                     catch {
                         Write-Host "  Upload FAILED: $_" -ForegroundColor Red
+                        Write-Host "  Files preserved in temp folder for retry" -ForegroundColor Yellow
                         $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Failed' -AdditionalFields @{
                             last_error = "Upload failed: $($_.Exception.Message)"
                             retry_count = $jobResult.RetryCount + 1
                         }
                         $failedCount++
-                    }
-                    finally {
-                        if (Test-Path $jobResult.TempOriginal) { Remove-Item $jobResult.TempOriginal -Force -ErrorAction SilentlyContinue }
-                        if (Test-Path $jobResult.TempCompressed) { Remove-Item $jobResult.TempCompressed -Force -ErrorAction SilentlyContinue }
                     }
                 }
                 else {
@@ -1073,6 +1123,8 @@ if ($Phase -in @('Process', 'Both')) {
             })
         }
 
+        # Clear the status line and move to next line
+        Write-Host "`r                                                                                     "
 
         Write-Host "
 All pipeline processing complete!

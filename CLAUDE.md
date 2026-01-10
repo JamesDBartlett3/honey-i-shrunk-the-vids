@@ -1,5 +1,24 @@
 # Project Instructions for Claude
 
+## Memory Management
+
+### Automatic Memory Updates
+- When a user message starts with "#", treat the content as an instruction to update project memory
+- Automatically update this CLAUDE.md file with the insight/instruction provided
+- Do not ask for confirmation - just update the file and acknowledge the change
+- This allows the user to quickly persist important learnings and preferences
+
+## Working Philosophy
+
+### Think Critically Before Implementing
+- When the user suggests a solution or approach, PAUSE and consider if there are simpler/cleaner/faster alternatives
+- Ask yourself: "Is this the best way to accomplish the goal, or is there another technique they haven't thought of yet?"
+- If a better alternative exists, present it to the user with your reasoning BEFORE implementing anything
+- The user's first idea is rarely their best idea - help them find better solutions through critical analysis
+- Only implement after discussing alternatives and getting confirmation
+
+**Example**: User suggests using ffprobe to check file completion → Recognize that checking file locks is simpler/faster → Suggest file lock approach first
+
 ## PowerShell Coding Standards
 
 ### Function Naming Convention
