@@ -312,18 +312,28 @@ function Initialize-SPVidCompConfig {
         $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
 
         # Load configuration from database
-        $configHash = Get-SPVidCompAllConfig 
+        $configHash = Get-SPVidCompAllConfig
         if ($configHash.Count -eq 0) {
             throw "No configuration found in database. Please run with -Setup parameter first."
         }
 
-        # Build config object from database values
+        # Helper function to convert SQLite INTEGER (0/1) to Boolean
+        function ConvertTo-Boolean {
+            param($value)
+            if ($null -eq $value -or $value -eq '') { return $false }
+            if ($value -is [string]) {
+                if ($value -eq '1' -or $value -eq 'True' -or $value -eq 'true') { return $true }
+                if ($value -eq '0' -or $value -eq 'False' -or $value -eq 'false') { return $false }
+                return [bool]::Parse($value)
+            }
+            return [bool]$value
+        }
+
+        # Build config object from database values (multi-scope schema)
         $Script:Config = [PSCustomObject]@{
             SharePoint = [PSCustomObject]@{
-                SiteUrl = $configHash['sharepoint_site_url']
-                LibraryName = $configHash['sharepoint_library_name']
-                FolderPath = $configHash['sharepoint_folder_path']
-                Recursive = [bool]::Parse($configHash['sharepoint_recursive'])
+                ScopeMode = $configHash['scope_mode']
+                AdminSiteUrl = $configHash['admin_site_url']
             }
             Paths = [PSCustomObject]@{
                 TempDownloadPath = $configHash['paths_temp_download']
@@ -336,34 +346,35 @@ function Initialize-SPVidCompConfig {
                 TimeoutMinutes = [int]$configHash['compression_timeout_minutes']
             }
             Processing = [PSCustomObject]@{
+                MaxParallelJobs = [int]$configHash['processing_max_parallel_jobs']
                 RetryAttempts = [int]$configHash['processing_retry_attempts']
                 RequiredDiskSpaceGB = [int]$configHash['processing_required_disk_space_gb']
                 DurationToleranceSeconds = [int]$configHash['processing_duration_tolerance_seconds']
             }
             Resume = [PSCustomObject]@{
-                EnableResumeCapability = [bool]::Parse($configHash['resume_enable'])
-                SkipProcessedFiles = [bool]::Parse($configHash['resume_skip_processed'])
-                ReprocessFailedFiles = [bool]::Parse($configHash['resume_reprocess_failed'])
+                EnableResumeCapability = ConvertTo-Boolean $configHash['resume_enable']
+                SkipProcessedFiles = ConvertTo-Boolean $configHash['resume_skip_processed']
+                ReprocessFailedFiles = ConvertTo-Boolean $configHash['resume_reprocess_failed']
             }
             Email = [PSCustomObject]@{
-                Enabled = [bool]::Parse($configHash['email_enabled'])
+                Enabled = ConvertTo-Boolean $configHash['email_enabled']
                 SmtpServer = $configHash['email_smtp_server']
                 SmtpPort = [int]$configHash['email_smtp_port']
-                UseSSL = [bool]::Parse($configHash['email_use_ssl'])
+                UseSSL = ConvertTo-Boolean $configHash['email_use_ssl']
                 From = $configHash['email_from']
-                To = $configHash['email_to'] -split ','
-                SendOnCompletion = [bool]::Parse($configHash['email_send_on_completion'])
-                SendOnError = [bool]::Parse($configHash['email_send_on_error'])
+                To = if ($configHash['email_to']) { $configHash['email_to'] -split ',' } else { @() }
+                SendOnCompletion = ConvertTo-Boolean $configHash['email_send_on_completion']
+                SendOnError = ConvertTo-Boolean $configHash['email_send_on_error']
             }
             Logging = [PSCustomObject]@{
                 LogLevel = $configHash['logging_log_level']
-                ConsoleOutput = [bool]::Parse($configHash['logging_console_output'])
+                ConsoleOutput = ConvertTo-Boolean $configHash['logging_console_output']
                 RetentionDays = [int]$configHash['logging_retention_days']
             }
             Advanced = [PSCustomObject]@{
-                CleanupTempFiles = [bool]::Parse($configHash['advanced_cleanup_temp_files'])
-                VerifyChecksums = [bool]::Parse($configHash['advanced_verify_checksums'])
-                DryRun = [bool]::Parse($configHash['advanced_dry_run'])
+                CleanupTempFiles = ConvertTo-Boolean $configHash['advanced_cleanup_temp_files']
+                VerifyChecksums = ConvertTo-Boolean $configHash['advanced_verify_checksums']
+                DryRun = ConvertTo-Boolean $configHash['advanced_dry_run']
             }
             IllegalCharacterHandling = [PSCustomObject]@{
                 Strategy = $configHash['illegal_char_strategy']
@@ -379,21 +390,18 @@ function Initialize-SPVidCompConfig {
 
         Write-SPVidCompLog -Message "Configuration loaded successfully from database" -Level 'Info'
 
-        # Initialize email config
-        Initialize-EmailConfig -Config @{
-            Enabled = $Script:Config.Email.Enabled
-            SmtpServer = $Script:Config.Email.SmtpServer
-            SmtpPort = $Script:Config.Email.SmtpPort
-            UseSSL = $Script:Config.Email.UseSSL
-            From = $Script:Config.Email.From
-            To = $Script:Config.Email.To
-            Username = $Script:Config.Email.Username
-            Password = $Script:Config.Email.Password
-            ClientId = $Script:Config.Email.ClientId
-            TenantId = $Script:Config.Email.TenantId
-            TokenCacheFile = $Script:Config.Email.TokenCacheFile
-            SendOnCompletion = $Script:Config.Email.SendOnCompletion
-            SendOnError = $Script:Config.Email.SendOnError
+        # Initialize email config if enabled
+        if ($Script:Config.Email.Enabled) {
+            Initialize-EmailConfig -Config @{
+                Enabled = $Script:Config.Email.Enabled
+                SmtpServer = $Script:Config.Email.SmtpServer
+                SmtpPort = $Script:Config.Email.SmtpPort
+                UseSSL = $Script:Config.Email.UseSSL
+                From = $Script:Config.Email.From
+                To = $Script:Config.Email.To
+                SendOnCompletion = $Script:Config.Email.SendOnCompletion
+                SendOnError = $Script:Config.Email.SendOnError
+            }
         }
 
         return $true
@@ -426,12 +434,11 @@ function Connect-SPVidCompSharePoint {
         # Import module
         Import-Module PnP.PowerShell -ErrorAction Stop
 
-        # Connect to SharePoint using PnP Management Shell app (requires admin consent in tenant)
-        # Admin consent URL: https://login.microsoftonline.com/common/adminconsent?client_id=31359c7f-bd7e-475c-86db-fdb8c937548e
+        # Connect to SharePoint
         Write-SPVidCompLog -Message "Connecting to SharePoint: $SiteUrl" -Level 'Info'
         Write-SPVidCompLog -Message "A browser window will open for authentication..." -Level 'Info'
 
-        $Script:SharePointConnection = Connect-PnPOnline -Url $SiteUrl -Interactive -ClientId "31359c7f-bd7e-475c-86db-fdb8c937548e" -ReturnConnection -ErrorAction Stop
+        $Script:SharePointConnection = Connect-PnPOnline -Url $SiteUrl -Interactive -ClientId "d0e63221-5ead-43d0-8f3f-ad7c7b30f518" -ReturnConnection -ErrorAction Stop
 
         Write-SPVidCompLog -Message "Successfully connected to SharePoint" -Level 'Info'
         return $Script:SharePointConnection
@@ -626,8 +633,13 @@ function Get-SPVidCompFiles {
         $catalogedCount = 0
 
         foreach ($file in $files) {
-            $fileUrl = $file.FieldValues.FileRef
-            $fullUrl = "$SiteUrl$fileUrl"
+            $fileUrl = $file.FieldValues.FileRef  # Server-relative path (e.g., "/sites/playground/Shared Documents/...")
+
+            # Construct full URL using base URL + server-relative path
+            $siteUri = [System.Uri]$SiteUrl
+            $baseUrl = "$($siteUri.Scheme)://$($siteUri.Host)"
+            $fullUrl = "$baseUrl$fileUrl"
+
             $filename = $file.FieldValues.FileLeafRef
             $fileSize = [long]$file.FieldValues.File_x0020_Size
             $modifiedDate = [DateTime]$file.FieldValues.Modified
@@ -682,9 +694,15 @@ function Receive-SPVidCompVideo {
         $destDir = Split-Path -Path $DestinationPath -Parent
         New-SPVidCompDirectory -Path $destDir
 
-        # Download file
-        Get-PnPFile -Url $serverRelativeUrl -Path $destDir -FileName (Split-Path -Path $DestinationPath -Leaf) `
-            -AsFile -Force -Connection $Script:SharePointConnection -ErrorAction Stop
+        # Download file (use -Connection if available, otherwise use current context)
+        if ($Script:SharePointConnection) {
+            Get-PnPFile -Url $serverRelativeUrl -Path $destDir -FileName (Split-Path -Path $DestinationPath -Leaf) `
+                -AsFile -Force -Connection $Script:SharePointConnection -ErrorAction Stop
+        }
+        else {
+            Get-PnPFile -Url $serverRelativeUrl -Path $destDir -FileName (Split-Path -Path $DestinationPath -Leaf) `
+                -AsFile -Force -ErrorAction Stop
+        }
 
         if (Test-Path -LiteralPath $DestinationPath) {
             Write-SPVidCompLog -Message "Video downloaded successfully: $DestinationPath" -Level 'Info'
@@ -866,8 +884,8 @@ function Invoke-SPVidCompCompression {
         $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
         $processStartInfo.FileName = $ffmpegPath
         $processStartInfo.Arguments = $ffmpegArgs -join ' '
-        $processStartInfo.RedirectStandardError = $true
-        $processStartInfo.RedirectStandardOutput = $true
+        $processStartInfo.RedirectStandardError = $false
+        $processStartInfo.RedirectStandardOutput = $false
         $processStartInfo.UseShellExecute = $false
         $processStartInfo.CreateNoWindow = $true
 
@@ -881,27 +899,32 @@ function Invoke-SPVidCompCompression {
 
         if (-not $completed) {
             # Timeout occurred
-            $process.Kill()
+            try {
+                $process.Kill()
+            } catch {
+                # Process may have already exited
+            }
             $process.WaitForExit()
+            $process.Dispose()
             Write-SPVidCompLog -Message "Compression timed out after $TimeoutMinutes minutes" -Level 'Error'
-
-            # Save error log
-            $errorOutput = $process.StandardError.ReadToEnd()
-            Set-Content -LiteralPath $ffmpegErrorLog -Value $errorOutput -Force
 
             return @{
                 Success = $false
                 Error = "Compression timed out after $TimeoutMinutes minutes"
-                ErrorLog = $errorOutput
+                ErrorLog = "Process killed due to timeout"
             }
         }
 
-        # Save stderr to log file
-        $errorOutput = $process.StandardError.ReadToEnd()
+        # Process completed within timeout
+        $exitCode = $process.ExitCode
+        $errorOutput = "Compression completed with exit code: $exitCode"
         Set-Content -LiteralPath $ffmpegErrorLog -Value $errorOutput -Force
 
+        # Dispose process object
+        $process.Dispose()
+
         # Check result
-        if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath $OutputPath)) {
+        if ($exitCode -eq 0 -and (Test-Path -LiteralPath $OutputPath)) {
             $inputSize = (Get-Item -LiteralPath $InputPath).Length
             $outputSize = (Get-Item -LiteralPath $OutputPath).Length
             $ratio = [math]::Round(($outputSize / $inputSize), 2)
@@ -979,8 +1002,8 @@ function Test-SPVidCompVideoIntegrity {
         $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
         $processStartInfo.FileName = $ffprobePath
         $processStartInfo.Arguments = $ffprobeArgs -join ' '
-        $processStartInfo.RedirectStandardError = $true
-        $processStartInfo.RedirectStandardOutput = $true
+        $processStartInfo.RedirectStandardError = $false
+        $processStartInfo.RedirectStandardOutput = $false
         $processStartInfo.UseShellExecute = $false
         $processStartInfo.CreateNoWindow = $true
 
@@ -989,11 +1012,15 @@ function Test-SPVidCompVideoIntegrity {
         $process.Start() | Out-Null
         $process.WaitForExit()
 
-        # Get error output
-        $errorOutput = $process.StandardError.ReadToEnd()
+        # Log result
+        $exitCode = $process.ExitCode
+        $errorOutput = "ffprobe completed with exit code: $exitCode"
         Set-Content -LiteralPath $ffprobeErrorLog -Value $errorOutput -Force
 
-        if ($process.ExitCode -eq 0) {
+        # Dispose process object
+        $process.Dispose()
+
+        if ($exitCode -eq 0) {
             Write-SPVidCompLog -Message "Video integrity verified: No corruption detected" -Level 'Debug'
             return @{
                 Success = $true
@@ -1141,8 +1168,13 @@ function Send-SPVidCompVideo {
         $serverRelativeUrl = $uri.AbsolutePath
         $folderPath = Split-Path -Path $serverRelativeUrl -Parent
 
-        # Upload file (overwrite existing)
-        Add-PnPFile -Path $LocalPath -Folder $folderPath -Connection $Script:SharePointConnection -ErrorAction Stop
+        # Upload file (overwrite existing) - use -Connection if available, otherwise use current context
+        if ($Script:SharePointConnection) {
+            Add-PnPFile -Path $LocalPath -Folder $folderPath -Connection $Script:SharePointConnection -ErrorAction Stop
+        }
+        else {
+            Add-PnPFile -Path $LocalPath -Folder $folderPath -ErrorAction Stop
+        }
 
         Write-SPVidCompLog -Message "Video uploaded successfully to SharePoint" -Level 'Info'
         return $true

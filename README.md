@@ -7,6 +7,7 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 ## Features
 
 - **Cross-Platform Compatible**: Runs on Windows, macOS, and Linux (PowerShell 7.0+)
+- **Multi-Scope Discovery**: Scan single libraries, entire sites, multiple sites, or your whole tenant
 - **Parallel Video Processing**: Process multiple videos concurrently (1-8 jobs) for dramatically faster batch operations
 - **Two-Phase Approach**: Catalog all videos first, then process them systematically
 - **SQLite Catalog**: Persistent database tracking with resume capability
@@ -15,9 +16,47 @@ Automate the process of scanning SharePoint for MP4 videos, compressing them usi
 - **Integrity Checking**: ffprobe verification to detect corruption
 - **Duration Validation**: Ensure compressed videos match original length
 - **Illegal Character Handling**: Automatic filename sanitization with configurable strategies
-- **Email Notifications**: Automated reports on completion and errors (OAuth 2.0 with MFA support)
+- **Email Notifications**: Automated reports on completion and errors
 - **Progress Tracking**: Resume from any interruption
-- **Comprehensive Logging**: Detailed logs with rotation
+- **Comprehensive Logging**: Detailed database-based logs with rotation
+- **Auto-Install FFmpeg**: Automatically downloads ffmpeg/ffprobe if not found in PATH
+
+## Prerequisites
+
+### Required Software
+- **PowerShell 7.0 or higher** - For cross-platform compatibility ([Download here](https://github.com/PowerShell/PowerShell/releases))
+- **ffmpeg & ffprobe** - Auto-installed on first run if not found in PATH, or manually install from [ffmpeg.org](https://ffmpeg.org/download.html)
+
+### Required PowerShell Modules
+The following modules will be automatically installed if missing:
+- **PnP.PowerShell** - SharePoint Online authentication and operations
+- **PSSQLite** - SQLite database operations
+- **Microsoft.PowerShell.ConsoleGuiTools** - Interactive site/library selection during setup
+
+### SharePoint Authentication Setup
+
+**IMPORTANT**: This solution uses the PnP Management Shell application for SharePoint authentication. Your **SharePoint administrator** must grant tenant-wide consent **once** for all users in your organization.
+
+**Admin Consent URL:**
+```
+https://login.microsoftonline.com/common/adminconsent?client_id=d0e63221-5ead-43d0-8f3f-ad7c7b30f518
+```
+
+**What this grants:**
+- Read and write access to SharePoint sites
+- Allows interactive browser-based authentication with MFA support
+- No custom app registration needed
+- Works with your regular user account permissions
+
+**After admin consent:**
+- All users can authenticate with their browser
+- MFA/SSO works automatically
+- No additional setup required per user
+
+### Network & Access
+- Network access to SharePoint Online tenant
+- Write access to external archive storage path
+- Sufficient disk space for temporary files (3x largest video recommended)
 
 ## Multi-Scope Configuration
 
@@ -115,24 +154,6 @@ Remove-Item data/video-catalog.db -ErrorAction SilentlyContinue
 .\Compress-SharePointVideos.ps1 -Setup
 ```
 
-## Prerequisites
-
-### Required Software
-- **PowerShell 7.0 or higher** - For cross-platform compatibility ([Download here](https://github.com/PowerShell/PowerShell/releases))
-- **ffmpeg** - For video compression ([Download here](https://ffmpeg.org/download.html))
-- **ffprobe** - For video verification (included with ffmpeg)
-
-### Required PowerShell Modules
-The following modules will be automatically installed if missing:
-- **PnP.PowerShell** - SharePoint Online authentication and operations
-- **PSSQLite** - SQLite database operations
-- **Microsoft.PowerShell.ConsoleGuiTools** - Interactive site/library selection during setup
-
-### Network & Access
-- Network access to SharePoint Online tenant
-- Write access to external archive storage path
-- Sufficient disk space for temporary files (3x largest video recommended)
-
 ## Cross-Platform Compatibility
 
 This solution is built on PowerShell 7.0+ and runs on **Windows**, **macOS**, and **Linux**.
@@ -165,25 +186,39 @@ The setup wizard automatically detects your platform and provides appropriate de
 
 ## Installation
 
-### 1. Install ffmpeg
-
-Download and install ffmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
-
-Ensure `ffmpeg` and `ffprobe` are accessible in your PATH:
+### 1. Clone/Download This Repository
 
 ```powershell
-ffmpeg -version
-ffprobe -version
+git clone https://github.com/JamesDBartlett3/honey-i-shrunk-the-vids.git
+cd honey-i-shrunk-the-vids
 ```
 
-### 2. Clone/Download This Repository
+### 2. (Optional) Install FFmpeg Manually
 
+FFmpeg will be automatically downloaded on first run if not found in your PATH. To install manually:
+
+**Windows (via Chocolatey):**
 ```powershell
-# Navigate to the project directory
-cd C:\AzDO\honey-i-shrunk-the-vids
+choco install ffmpeg
 ```
 
-### 3. Run First-Time Setup
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get install ffmpeg
+```
+
+Or download from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+
+### 3. Ensure Admin Has Granted Consent
+
+Before running the script, verify your SharePoint admin has granted consent for the PnP Management Shell app (see Prerequisites section above).
+
+### 4. Run First-Time Setup
 
 On first launch, the script will automatically run the interactive setup wizard:
 
@@ -199,16 +234,17 @@ Or explicitly run setup:
 
 The setup wizard will prompt you for all necessary configuration:
 - **SharePoint Scope Configuration**: Choose scope mode (Single/Site/Multiple/Tenant) and select sites/libraries interactively
-- **File Paths**: Temp download, external archive, logs (with platform-aware defaults)
+- **File Paths**: Temp download, external archive (with platform-aware defaults)
 - **Compression Settings**: Frame rate, codec, timeout
 - **Processing Settings**: Max parallel jobs, retry attempts, disk space requirements
+- **Resume Settings**: Enable resume, skip processed, reprocess failed
 - **Illegal Character Handling**: Strategy for filenames with illegal characters
-- **Email Notifications**: SMTP settings (optional)
+- **Email Notifications**: SMTP settings (optional, supports OAuth 2.0 for Microsoft 365)
 - **Logging Settings**: Log level, output options
 
 All configuration is stored in the SQLite database (`data/video-catalog.db`).
 
-### 4. Verify Setup
+### 5. Verify Setup
 
 After setup completes, you can run the script normally. It will display your current settings and ask for confirmation before proceeding:
 
@@ -290,27 +326,29 @@ By default, the database is stored at `data/video-catalog.db`. To use a differen
 
 ### Phase 1: Catalog Discovery
 
-1. Connect to SharePoint using interactive authentication
-2. Scan specified libraries for MP4 files
-3. Store metadata in SQLite database:
-   - SharePoint URL
-   - Filename, size, modified date
-   - Site and library information
-4. Display catalog statistics
+1. Connect to SharePoint using interactive browser authentication
+2. For each configured scope:
+   - Connect to the site
+   - Scan libraries for MP4 files
+   - Store metadata in SQLite database with scope reference
+3. Display catalog statistics per scope and in aggregate
+4. Update scope statistics (video count, total size, last scan date)
 
 ### Phase 2: Video Processing
 
-For each cataloged video:
+For each cataloged video (supports parallel processing):
 
 1. **Download** - Retrieve original from SharePoint to temp location
 2. **Archive** - Copy to external storage with SHA256 hash verification
 3. **Compress** - Use ffmpeg to compress with configured settings
 4. **Verify Integrity** - Use ffprobe to detect corruption
-5. **Validate Duration** - Ensure compressed duration matches original
+5. **Validate Duration** - Ensure compressed duration matches original (±1 second tolerance)
 6. **Upload** - Replace original in SharePoint with compressed version
 7. **Cleanup** - Remove temporary files
 
 If any step fails, the video is marked as failed and the original is preserved.
+
+**Parallel Processing:** Configure 1-8 concurrent jobs for faster processing. The system auto-detects optimal value (CPU cores - 1) during setup.
 
 ## Safety Features
 
@@ -331,15 +369,15 @@ If any step fails, the video is marked as failed and the original is preserved.
 
 ### Error Handling
 - Try-Catch blocks on all operations
-- Detailed error logging
-- Email notifications on failures
+- Detailed error logging in database
+- Email notifications on failures (optional)
 - Originals preserved on any error
 
 ## Configuration
 
 ### Configuration Storage
 
-All configuration is stored in the SQLite database (`data/video-catalog.db`) as key-value pairs. No separate configuration file is needed.
+All configuration is stored in the SQLite database (`data/video-catalog.db`) in the `config` table. No separate configuration file is needed.
 
 ### Configuration Categories
 
@@ -348,28 +386,24 @@ The interactive setup wizard collects configuration in these categories:
 #### SharePoint Scope Settings
 - **Scope Mode**: Discovery scope (Single/Site/Multiple/Tenant)
 - **Admin Site URL**: SharePoint Admin Center URL (Tenant mode only)
-- **Configured Scopes**: One or more site/library combinations selected interactively
-  - Each scope includes: Site URL, Library Name, optional Folder Path, Recursive flag
-- **Interactive Selection**: Use ConsoleGuiTools grid for intuitive site/library selection
+- **Configured Scopes**: One or more site/library combinations stored in `scopes` table
+  - Each scope includes: Site URL, Library Name, optional Folder Path, Recursive flag, Display Name
+- **Interactive Selection**: Uses ConsoleGuiTools grid for intuitive site/library selection
 
 #### File Paths
 - **Temp Download Path**: Local temporary storage
 - **External Archive Path**: Network/external storage for originals
-- **Log Path**: Directory for log files
 
 **Platform-Specific Defaults:**
 - **Windows**:
   - Temp: `C:\Temp\VideoCompression`
   - Archive: `\\NAS\Archive\Videos`
-  - Logs: `.\logs`
 - **macOS**:
   - Temp: `/tmp/VideoCompression`
   - Archive: `/Volumes/NAS/Archive/Videos`
-  - Logs: `./logs`
 - **Linux**:
   - Temp: `/tmp/VideoCompression`
   - Archive: `/mnt/nas/Archive/Videos`
-  - Logs: `./logs`
 
 #### Compression Settings
 - **Frame Rate**: Target frame rate (default: 10)
@@ -394,6 +428,11 @@ The interactive setup wizard collects configuration in these categories:
 - **Retry Attempts**: Times to retry failed videos (default: 3)
 - **Required Disk Space**: Minimum free space in GB (default: 50)
 - **Duration Tolerance**: Acceptable duration difference in seconds (default: 1)
+
+#### Resume Settings
+- **Enable Resume**: Allow resuming interrupted processing (default: true)
+- **Skip Processed**: Skip already completed videos (default: true)
+- **Reprocess Failed**: Retry previously failed videos (default: true)
 
 #### Illegal Character Handling
 - **Strategy**: How to handle filenames with illegal characters
@@ -431,9 +470,7 @@ The solution automatically detects platform-specific illegal filename characters
 #### Logging Settings
 - **Log Level**: Debug, Info, Warning, or Error
 - **Console Output**: Display logs in console
-- **File Output**: Write logs to files
-- **Max Log Size**: Maximum log file size in MB
-- **Log Retention**: Days to keep old logs
+- **File Output**: Write logs to files (currently stored in database)
 
 ### Viewing Current Configuration
 
@@ -441,8 +478,8 @@ The script displays your current configuration each time it runs. You can also q
 
 ```powershell
 Import-Module .\modules\VideoCompressionModule\VideoCompressionModule.psm1
-Initialize-SPVidComp-Catalog -DatabasePath ".\data\video-catalog.db"
-$config = Get-SPVidComp-Config
+Initialize-SPVidCompCatalog -DatabasePath ".\data\video-catalog.db"
+$config = Get-SPVidCompConfig
 $config | Format-Table
 ```
 
@@ -452,8 +489,15 @@ The SQLite database (`video-catalog.db`) contains:
 
 ### Tables
 
+**scopes** - Multi-scope configuration
+- Scope metadata (mode, site URL, library name, folder path)
+- Recursive scanning flag
+- Enabled status
+- Statistics (video count, total size, last scan date)
+
 **videos** - Main catalog
 - Video metadata (URL, filename, size, dates)
+- Scope reference (foreign key to scopes table)
 - Processing status and timestamps
 - Compression statistics
 - Hash values for verification
@@ -464,28 +508,48 @@ The SQLite database (`video-catalog.db`) contains:
 - Timestamp and messages
 - Linked to video records
 
-**metadata** - System state and configuration
-- **Configuration**: All settings stored as `config_*` keys
-- **System State**: Last catalog/processing run, total counts
-- **Statistics**: Aggregated metrics
+**config** - Configuration storage (single-row table)
+- All settings stored as typed columns
+- SharePoint scope mode and admin URL
+- File paths, compression settings, processing settings
+- Resume settings, email settings, logging settings
+- Illegal character handling strategy
+
+**logs** - Database-based logging
+- Log entries with timestamp, level, component, message
+- Replaces file-based logging for better querying and management
 
 ## Troubleshooting
 
-### PnP.PowerShell Module Issues
+### PnP.PowerShell Authentication Issues
 
-If you encounter authentication issues:
+If you encounter authentication issues, verify your admin has granted consent:
+
+**Admin Consent URL:**
+```
+https://login.microsoftonline.com/common/adminconsent?client_id=d0e63221-5ead-43d0-8f3f-ad7c7b30f518
+```
+
+If issues persist, try updating the module:
 ```powershell
-# Manually install/update PnP.PowerShell
-Install-Module -Name PnP.PowerShell -Force -AllowClobber
 Update-Module -Name PnP.PowerShell
 ```
 
 ### ffmpeg Not Found
 
-Ensure ffmpeg is in your PATH:
+The script will automatically download ffmpeg/ffprobe on first run. To manually ensure they're in PATH:
+
+**Windows:**
 ```powershell
 $env:Path += ";C:\ffmpeg\bin"
 ```
+
+**macOS/Linux:**
+```bash
+export PATH=$PATH:/path/to/ffmpeg/bin
+```
+
+Or the script will download them to `modules/VideoCompressionModule/bin/ffmpeg/` and use them from there.
 
 ### Insufficient Disk Space
 
@@ -496,21 +560,23 @@ The script checks for required disk space before processing. Increase `RequiredD
 Query failed videos:
 ```powershell
 Import-Module .\modules\VideoCompressionModule\VideoCompressionModule.psm1
-Initialize-SPVidComp-Config -DatabasePath ".\data\video-catalog.db"
-$failed = Get-SPVidComp-Videos -Status 'Failed'
+Initialize-SPVidCompCatalog -DatabasePath ".\data\video-catalog.db"
+$failed = Get-SPVidCompVideos -Status 'Failed'
 $failed | Format-Table filename, last_error, retry_count
 ```
 
 Retry failed videos:
 ```powershell
-.\scripts\Compress-SharePointVideos.ps1 -Phase Process
+.\Compress-SharePointVideos.ps1 -Phase Process
 ```
 
 ### View Logs
 
-Logs are stored in `logs\` directory:
+Logs are stored in the database. Query them with:
 ```powershell
-Get-Content .\logs\video-compression-20260107.log -Tail 50
+Import-Module PSSQLite
+$db = ".\data\video-catalog.db"
+Invoke-SqliteQuery -DataSource $db -Query "SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50"
 ```
 
 ## Advanced Usage
@@ -519,13 +585,16 @@ Get-Content .\logs\video-compression-20260107.log -Tail 50
 
 ```powershell
 Import-Module PSSQLite
-$db = "C:\AzDO\honey-i-shrunk-the-vids\data\video-catalog.db"
+$db = ".\data\video-catalog.db"
 
 # Get all videos
 Invoke-SqliteQuery -DataSource $db -Query "SELECT * FROM videos"
 
 # Get statistics
 Invoke-SqliteQuery -DataSource $db -Query "SELECT status, COUNT(*) as count FROM videos GROUP BY status"
+
+# View configured scopes
+Invoke-SqliteQuery -DataSource $db -Query "SELECT * FROM scopes WHERE enabled = 1"
 ```
 
 ### Custom Processing
@@ -535,13 +604,13 @@ Import the module and use individual functions:
 Import-Module .\modules\VideoCompressionModule\VideoCompressionModule.psm1
 
 # Initialize
-Initialize-SPVidComp-Config -DatabasePath ".\data\video-catalog.db"
+Initialize-SPVidCompCatalog -DatabasePath ".\data\video-catalog.db"
 
 # Connect to SharePoint
-Connect-SPVidComp-SharePoint -SiteUrl "https://contoso.sharepoint.com/sites/Videos"
+Connect-SPVidCompSharePoint -SiteUrl "https://contoso.sharepoint.com/sites/Videos"
 
 # Get specific videos
-$videos = Get-SPVidComp-Videos -Status 'Cataloged' -Limit 10
+$videos = Get-SPVidCompVideos -Status 'Cataloged' -Limit 10
 
 # Process individual video
 # ... (use module functions)
@@ -549,74 +618,110 @@ $videos = Get-SPVidComp-Videos -Status 'Cataloged' -Limit 10
 
 ## Function Reference
 
-All functions follow the `Verb-SPVidComp-Noun` naming convention:
+All functions follow the `Verb-SPVidComp{Noun}` naming convention:
 
 ### Configuration & Connection
-- `Initialize-SPVidComp-Config` - Load settings and initialize
-- `Connect-SPVidComp-SharePoint` - Authenticate to SharePoint
-- `Initialize-SPVidComp-Catalog` - Create/open database
+- `Initialize-SPVidCompConfig` - Load settings and initialize
+- `Get-SPVidCompConfig` - Get all configuration values
+- `Set-SPVidCompConfig` - Update configuration
+- `Test-SPVidCompConfigExists` - Check if configuration exists
+- `Connect-SPVidCompSharePoint` - Authenticate to SharePoint
+- `Disconnect-SPVidCompSharePoint` - Disconnect from SharePoint
+- `Initialize-SPVidCompCatalog` - Create/open database
+
+### Scope Management (Multi-Scope Feature)
+- `Get-SPVidCompDiscoverTenantSites` - Discover all sites in tenant
+- `Get-SPVidCompDiscoverSiteLibraries` - Discover libraries in a site
+- `Select-SPVidCompScopesInteractive` - Interactive site/library selection
+- `Add-SPVidCompScope` - Add a scope to configuration
+- `Get-SPVidCompScopes` - Query configured scopes
+- `Update-SPVidCompScopeStats` - Update scope statistics
+- `Remove-SPVidCompScope` - Remove a scope
+- `Enable-SPVidCompScope` - Enable a scope
+- `Disable-SPVidCompScope` - Disable a scope
 
 ### Catalog Operations
-- `Add-SPVidComp-Video` - Add video to catalog
-- `Get-SPVidComp-Videos` - Query videos by status
-- `Update-SPVidComp-Status` - Update processing status
-- `Get-SPVidComp-Files` - Scan SharePoint and catalog videos
+- `Add-SPVidCompVideo` - Add video to catalog
+- `Get-SPVidCompVideos` - Query videos by status
+- `Update-SPVidCompStatus` - Update processing status
+- `Get-SPVidCompFiles` - Scan SharePoint and catalog videos
 
 ### Processing Operations
-- `Download-SPVidComp-Video` - Download from SharePoint
-- `Copy-SPVidComp-Archive` - Archive with hash verification
-- `Test-SPVidComp-ArchiveIntegrity` - Verify SHA256 hash
-- `Invoke-SPVidComp-Compression` - Compress with ffmpeg
-- `Test-SPVidComp-VideoIntegrity` - Check for corruption
-- `Test-SPVidComp-VideoLength` - Compare durations
-- `Upload-SPVidComp-Video` - Upload to SharePoint
+- `Receive-SPVidCompVideo` - Download from SharePoint
+- `Copy-SPVidCompArchive` - Archive with hash verification
+- `Test-SPVidCompArchiveIntegrity` - Verify SHA256 hash
+- `Invoke-SPVidCompCompression` - Compress with ffmpeg
+- `Test-SPVidCompVideoIntegrity` - Check for corruption with ffprobe
+- `Test-SPVidCompVideoLength` - Compare durations
+- `Send-SPVidCompVideo` - Upload to SharePoint
+
+### FFmpeg Management
+- `Test-SPVidCompFFmpegAvailability` - Check if ffmpeg/ffprobe available
+- `Install-SPVidCompFFmpeg` - Download and install ffmpeg/ffprobe
+- `Get-SPVidCompFFmpegPath` - Get path to ffmpeg executable
+- `Get-SPVidCompFFprobePath` - Get path to ffprobe executable
 
 ### Utilities
-- `Write-SPVidComp-Log` - Write log entry
-- `Send-SPVidComp-Notification` - Send email
-- `Test-SPVidComp-DiskSpace` - Check available space
-- `Get-SPVidComp-Statistics` - Generate report
+- `Write-SPVidCompLog` - Write log entry
+- `Send-SPVidCompNotification` - Send email notification
+- `Test-SPVidCompDiskSpace` - Check available space
+- `Get-SPVidCompStatistics` - Generate statistics report
+- `Get-SPVidCompPlatformDefaults` - Get platform-specific defaults
+- `Get-SPVidCompIllegalCharacters` - Get illegal filename characters
+- `Test-SPVidCompFilenameCharacters` - Test filename for illegal characters
+- `Repair-SPVidCompFilename` - Sanitize filename based on strategy
 
 ## Best Practices
 
 1. **Test First**: Run with `-DryRun` to verify catalog
 2. **Start Small**: Test with a small library before processing entire tenant
-3. **Monitor Disk Space**: Ensure adequate temp storage
-4. **Check Logs**: Review logs after each run
+3. **Monitor Disk Space**: Ensure adequate temp storage (3x largest video)
+4. **Check Logs**: Review database logs after each run
 5. **Verify Archive**: Confirm archive storage has sufficient space
 6. **Backup Database**: Periodically backup `video-catalog.db`
 7. **Email Alerts**: Configure email notifications for unattended runs
+8. **Parallel Processing**: Start with default parallel jobs, adjust based on system performance
 
 ## Architecture
 
 ```
 honey-i-shrunk-the-vids/
-├── Compress-SharePointVideos.ps1   # Main script with interactive setup
+├── Compress-SharePointVideos.ps1      # Main orchestration script
+├── Repair-GitCommitAuthor.ps1         # Utility: Fix git commit attribution
 ├── modules/
 │   └── VideoCompressionModule/
 │       ├── VideoCompressionModule.psm1  # Main module
-│       ├── VideoCompressionModule.psd1  # Manifest
+│       ├── VideoCompressionModule.psd1  # Module manifest
+│       ├── bin/                         # Auto-created for ffmpeg binaries
 │       └── Private/
-│           ├── Logger.ps1          # Logging infrastructure
-│           ├── DatabaseManager.ps1 # SQLite operations & config storage
-│           └── EmailHelper.ps1     # Email notifications
-├── logs/                           # Log files (auto-generated)
+│           ├── Logger.ps1               # Logging infrastructure
+│           ├── DatabaseManager.ps1      # SQLite operations & config storage
+│           ├── EmailHelper.ps1          # Email notifications
+│           ├── ScopeDiscovery.ps1       # Tenant/site/library discovery
+│           └── ScopeManager.ps1         # Scope CRUD operations
 ├── data/
-│   └── video-catalog.db            # SQLite database (auto-created)
-│                                   #   - Video catalog
-│                                   #   - Configuration storage
-│                                   #   - Processing state
-├── tests/                          # Pester test suite
-│   ├── TestHelper.ps1              # Common test utilities
-│   ├── Run-Tests.ps1               # Test runner script
+│   └── video-catalog.db                 # SQLite database (auto-created)
+│                                        #   - Video catalog
+│                                        #   - Scopes configuration
+│                                        #   - Configuration storage
+│                                        #   - Processing state
+│                                        #   - Logs
+├── tests/                               # Pester test suite (108 tests)
+│   ├── TestHelper.ps1                   # Common test utilities
+│   ├── Run-Tests.ps1                    # Test runner script
 │   ├── VideoCompressionModule.Tests.ps1
 │   ├── Private/
 │   │   ├── DatabaseManager.Tests.ps1
 │   │   ├── Logger.Tests.ps1
 │   │   └── EmailHelper.Tests.ps1
 │   └── Integration/
-│       └── Workflow.Tests.ps1      # Integration tests
-└── temp/                           # Temporary storage (auto-cleaned)
+│       └── Workflow.Tests.ps1           # Integration tests
+└── docs/
+    ├── README.md                        # This file
+    ├── EMAIL-OAUTH-SETUP.md             # OAuth 2.0 setup guide
+    ├── CLAUDE.md                        # Project-specific instructions
+    ├── TODO.md                          # Development tasks
+    └── FUTURE-ENHANCEMENTS.md           # Feature roadmap
 ```
 
 ## Testing
@@ -653,34 +758,26 @@ The project includes a comprehensive Pester test suite covering unit tests and i
 .\tests\Run-Tests.ps1 -OutputPath .\test-results.xml
 ```
 
-### Test Categories
-
-| Category | Description | Location |
-|----------|-------------|----------|
-| **DatabaseManager** | SQLite operations, schema creation, CRUD | `tests/Private/DatabaseManager.Tests.ps1` |
-| **Logger** | Logging infrastructure, rotation, levels | `tests/Private/Logger.Tests.ps1` |
-| **EmailHelper** | Email notifications, report generation | `tests/Private/EmailHelper.Tests.ps1` |
-| **Module Functions** | Public module functions, utilities | `tests/VideoCompressionModule.Tests.ps1` |
-| **Integration** | End-to-end workflow, status progression | `tests/Integration/Workflow.Tests.ps1` |
-
 ### Test Coverage
 
-The test suite covers:
-- Database initialization and schema creation
+The test suite (108 tests) covers:
+- Database initialization and schema creation (including scopes table)
 - Video catalog CRUD operations
+- Scope management operations
 - Status progression workflow
 - Configuration persistence
 - Filename sanitization and illegal character handling
 - Archive copy with hash verification
 - Disk space validation
+- FFmpeg availability detection
 - Error handling and retry logic
 - Resume capability after interruption
 - Statistics calculation
 
 ## License
 
-Copyright (c) 2026. All rights reserved.
+Copyright (c) 2026 James Bartlett. All rights reserved.
 
 ## Support
 
-For issues, questions, or contributions, please refer to your organization's internal support channels.
+For issues, questions, or contributions, please open an issue on [GitHub](https://github.com/JamesDBartlett3/honey-i-shrunk-the-vids/issues).

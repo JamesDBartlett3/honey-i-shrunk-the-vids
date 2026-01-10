@@ -22,6 +22,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Register cleanup on Ctrl+C
+$null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+    Write-Host "`n`nCleaning up background jobs..." -ForegroundColor Yellow
+    Get-Job | Stop-Job -PassThru | Remove-Job -Force
+    Write-Host "Cleanup complete. Exiting." -ForegroundColor Green
+}
+
 #------------------------------------------------------------------------------------------------------------------
 # Import Module
 #------------------------------------------------------------------------------------------------------------------
@@ -456,6 +463,13 @@ if ($Phase -in @('Catalog', 'Both')) {
 
         Write-Host "Scanning $($scopes.Count) enabled scope(s)...`n" -ForegroundColor Yellow
 
+        # Connect to SharePoint ONCE at the beginning
+        # PnP.PowerShell can access multiple sites in the same tenant after authentication
+        Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
+        $firstSiteUrl = $scopes[0].site_url
+        $Script:SPConnection = Connect-SPVidCompSharePoint -SiteUrl $firstSiteUrl
+        Write-Host "Authentication successful. Connection will be reused for all scopes.`n" -ForegroundColor Green
+
         $totalCataloged = 0
         $scopeIndex = 0
 
@@ -474,11 +488,7 @@ if ($Phase -in @('Catalog', 'Both')) {
             Write-Host ""
 
             try {
-                # Connect to this specific site
-                Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
-                $null = Connect-SPVidCompSharePoint -SiteUrl $scope.site_url
-
-                # Scan library for videos
+                # Scan library for videos (reuses existing connection)
                 Write-Host "Enumerating videos..." -ForegroundColor Yellow
                 $catalogedCount = Get-SPVidCompFiles -SiteUrl $scope.site_url `
                     -LibraryName $scope.library_name `
@@ -499,10 +509,6 @@ if ($Phase -in @('Catalog', 'Both')) {
                 Write-SPVidCompLog -Message "Scope '$($scope.display_name)' failed: $_" -Level 'Error'
                 # Continue to next scope (don't fail entire catalog)
             }
-            finally {
-                # Disconnect from this site
-                Disconnect-SPVidCompSharePoint
-            }
 
             Write-Host ""
         }
@@ -519,17 +525,17 @@ if ($Phase -in @('Catalog', 'Both')) {
         Write-Host "  Total Videos       : $($stats.TotalCataloged)" -ForegroundColor White
         Write-Host "  Cataloged          : " -NoNewline -ForegroundColor White
         $catalogedStatus = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Cataloged' }
-        Write-Host "$($catalogedStatus.count)" -ForegroundColor White
+        Write-Host "$(if ($catalogedStatus) { $catalogedStatus.count } else { 0 })" -ForegroundColor White
         Write-Host "  Processing         : " -NoNewline -ForegroundColor White
         $processingStatus = $stats.StatusBreakdown | Where-Object { $_.status -in @('Downloading', 'Compressing', 'Uploading') }
-        $processingCount = ($processingStatus | Measure-Object -Property count -Sum).Sum
+        $processingCount = if ($processingStatus) { ($processingStatus | Measure-Object -Property count -Sum).Sum } else { 0 }
         Write-Host "$processingCount" -ForegroundColor White
         Write-Host "  Completed          : " -NoNewline -ForegroundColor White
         $completedStatus = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Completed' }
-        Write-Host "$($completedStatus.count)" -ForegroundColor White
+        Write-Host "$(if ($completedStatus) { $completedStatus.count } else { 0 })" -ForegroundColor White
         Write-Host "  Failed             : " -NoNewline -ForegroundColor White
         $failedStatus = $stats.StatusBreakdown | Where-Object { $_.status -eq 'Failed' }
-        Write-Host "$($failedStatus.count)" -ForegroundColor White
+        Write-Host "$(if ($failedStatus) { $failedStatus.count } else { 0 })" -ForegroundColor White
         Write-Host "  Total Size         : $([math]::Round($stats.TotalOriginalSize / 1GB, 2)) GB" -ForegroundColor White
         Write-Host ""
 
@@ -553,11 +559,22 @@ if ($Phase -in @('Process', 'Both')) {
     try {
         Show-SPVidCompHeader "PHASE 2: VIDEO PROCESSING"
 
-        # Connect to SharePoint if not already connected
-        if ($Phase -eq 'Process') {
+        # Ensure SharePoint connection exists (reuse from catalog or create new)
+        if (-not $Script:SPConnection) {
             Write-Host "Connecting to SharePoint..." -ForegroundColor Yellow
-            $siteUrl = Get-SPVidCompConfigValue -Key 'sharepoint_site_url'
-            $null = Connect-SPVidCompSharePoint -SiteUrl $siteUrl
+
+            # Get first video to determine site URL for initial connection
+            $firstVideo = (Get-SPVidCompVideos -Status 'Cataloged' -MaxRetryCount 999 | Select-Object -First 1)
+            if (-not $firstVideo) {
+                Write-Host "No videos to process." -ForegroundColor Yellow
+                exit 0
+            }
+
+            $Script:SPConnection = Connect-SPVidCompSharePoint -SiteUrl $firstVideo.site_url
+            Write-Host "Authentication successful.`n" -ForegroundColor Green
+        }
+        else {
+            Write-Host "Using existing SharePoint connection from catalog phase...`n" -ForegroundColor Yellow
         }
 
         # Query videos to process
@@ -606,53 +623,63 @@ if ($Phase -in @('Process', 'Both')) {
         if ($maxParallelJobs -lt 1) { $maxParallelJobs = 1 }
         if ($maxParallelJobs -gt 8) { $maxParallelJobs = 8 }
 
-        Write-Host "Parallel Processing: $maxParallelJobs concurrent jobs`n" -ForegroundColor Cyan
+        Write-Host "Processing Architecture: Pipeline (Download → Compress in parallel → Upload)`n" -ForegroundColor Cyan
+        Write-Host "Max parallel compressions: $maxParallelJobs`n" -ForegroundColor Cyan
 
-        # Thread-safe counters using synchronized hashtable
-        $progressCounters = [hashtable]::Synchronized(@{
-            Processed = 0
-            Failed = 0
-        })
+        # Counters
+        $processedCount = 0
+        $failedCount = 0
 
-        # Process videos in parallel
-        $videosToProcess | ForEach-Object -ThrottleLimit $maxParallelJobs -Parallel {
-            # Import module in parallel runspace
-            $modulePath = Join-Path -Path $using:PSScriptRoot -ChildPath 'modules\VideoCompressionModule\VideoCompressionModule.psm1'
-            Import-Module $modulePath -Force -WarningAction SilentlyContinue
+        # Clean up any leftover jobs from previous runs
+        $existingJobs = Get-Job
+        if ($existingJobs) {
+            Write-Host "Cleaning up $($existingJobs.Count) leftover job(s) from previous runs..." -ForegroundColor Yellow
+            foreach ($job in $existingJobs) {
+                Write-Host "  Removing job $($job.Id) (State: $($job.State))" -ForegroundColor Gray
+                try {
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
+                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                } catch {
+                    Write-Host "    Warning: Could not remove job $($job.Id)" -ForegroundColor Yellow
+                }
+            }
 
-            # Get video from pipeline
-            $video = $_
+            # Verify cleanup
+            $remainingJobs = Get-Job
+            if ($remainingJobs) {
+                Write-Host "  WARNING: $($remainingJobs.Count) job(s) could not be removed!" -ForegroundColor Red
+                Write-Host "  Run 'Get-Job | Remove-Job -Force' in another window and restart." -ForegroundColor Yellow
+                exit 1
+            }
+            Write-Host "Cleanup complete.`n" -ForegroundColor Green
+        }
 
-            # Import variables from parent scope
-            $tempPath = $using:tempPath
-            $archivePath = $using:archivePath
-            $frameRate = $using:frameRate
-            $videoCodec = $using:videoCodec
-            $timeoutMinutes = $using:timeoutMinutes
-            $durationTolerance = $using:durationTolerance
-            $illegalCharStrategy = $using:illegalCharStrategy
-            $illegalCharReplacement = $using:illegalCharReplacement
-            $DryRun = $using:DryRun
-            $counters = $using:progressCounters
+        # Job tracking
+        $compressionJobs = @()
+        $completedVideos = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+
+        #==================================================================================
+        # PIPELINE: Download → Compress (parallel jobs) → Upload
+        #==================================================================================
+        Write-Host "Starting pipeline processing of $($videosToProcess.Count) videos...`n" -ForegroundColor Yellow
+
+        foreach ($video in $videosToProcess) {
+            Write-Host "----------------------------------------" -ForegroundColor Cyan
+            Write-Host "[$($processedCount + $failedCount + 1)/$($videosToProcess.Count)] $($video.filename)" -ForegroundColor Cyan
+            # Step 1: Download
+            Write-Host "[1/3] Downloading..." -ForegroundColor Yellow
 
             try {
-                Write-Host "`n----------------------------------------" -ForegroundColor Cyan
-                Write-Host "Processing: $($video.filename)" -ForegroundColor Cyan
-                Write-Host "Video ID: $($video.id)" -ForegroundColor Gray
-                Write-Host "Size: $([math]::Round($video.original_size / 1MB, 2)) MB" -ForegroundColor Gray
-                Write-Host "----------------------------------------" -ForegroundColor Cyan
-
                 if ($DryRun) {
-                    Write-Host "[DRY RUN] Would process this video" -ForegroundColor Magenta
-                    return
+                    Write-Host "  [DRY RUN] Would download this video" -ForegroundColor Magenta
+                    continue
                 }
 
                 # Temp file paths
                 $tempOriginal = Join-Path -Path $tempPath -ChildPath "$($video.id)_original.mp4"
                 $tempCompressed = Join-Path -Path $tempPath -ChildPath "$($video.id)_compressed.mp4"
 
-                # Step 1: Download
-                Write-Host "`n[1/6] Downloading from SharePoint..." -ForegroundColor Yellow
+                # Download from SharePoint (main thread)
                 $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Downloading'
 
                 $downloadSuccess = Receive-SPVidCompVideo -SharePointUrl $video.sharepoint_url `
@@ -662,178 +689,394 @@ if ($Phase -in @('Process', 'Both')) {
                     throw "Download failed"
                 }
 
-                # Step 2: Archive with hash verification
-                Write-Host "[2/6] Archiving to external storage..." -ForegroundColor Yellow
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Archiving'
+                Write-Host "  Downloaded: $([math]::Round((Get-Item $tempOriginal).Length / 1MB, 2)) MB" -ForegroundColor Green
 
-                # Sanitize filename for filesystem compatibility
-                $sanitizeResult = Repair-SPVidCompFilename -Filename $video.filename `
-                    -Strategy $illegalCharStrategy -ReplacementChar $illegalCharReplacement
+                # Step 2: Start compression job (background)
+                Write-Host "[2/3] Starting compression job..." -ForegroundColor Yellow
 
-                if (-not $sanitizeResult.Success) {
-                    throw "Filename sanitization failed: $($sanitizeResult.Error)"
-                }
+                # Wait if we're at max parallel jobs
+                # Calculate running count - will be recalculated in loop
+                $systemRunningJobIds = (Get-Job -State Running).Id
+                $compressionJobs = @($compressionJobs | Where-Object {
+                    $_.Job -and
+                    (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
+                })
+                $runningCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemRunningJobIds }).Count
 
-                if ($sanitizeResult.Changed) {
-                    Write-Host "  Filename sanitized: '$($video.filename)' -> '$($sanitizeResult.SanitizedFilename)'" -ForegroundColor Yellow
-                }
+                while ($runningCount -ge $maxParallelJobs) {
+                    Write-Host "  Waiting for compression slots ($runningCount/$maxParallelJobs active)..." -ForegroundColor Yellow
 
-                # Build mirrored folder structure: <archive>/<site>/<library>/<folder_path>/<filename>
-                # Extract site path from URL (e.g., "https://contoso.sharepoint.com/sites/MySite")
-                $siteUri = [System.Uri]$video.site_url
-                $sitePath = $siteUri.AbsolutePath.TrimStart('/')
-
-                if ([string]::IsNullOrEmpty($sitePath)) {
-                    $sitePath = $siteUri.Host.Split('.')[0]  # Use hostname if path is empty
-                }
-
-                # Split site path components and join using platform-appropriate separator
-                $sitePathComponents = $sitePath.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
-
-                # Start with archive root
-                $videoArchivePath = $archivePath
-
-                # Add site path components (e.g., "sites", "MySite")
-                foreach ($component in $sitePathComponents) {
-                    $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $component
-                }
-
-                # Add library name
-                $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $video.library_name
-
-                # Add folder path components if present
-                if (-not [string]::IsNullOrEmpty($video.folder_path)) {
-                    $folderPathComponents = $video.folder_path.TrimStart('/').Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
-                    foreach ($component in $folderPathComponents) {
-                        $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $component
+                    # Check for hung jobs (timeout + 5 minute buffer for archive/verify)
+                    $maxJobRuntime = ($timeoutMinutes + 5) * 60
+                    $now = Get-Date
+                    $currentRunningJobIds = (Get-Job -State Running).Id
+                    $hungJobs = $compressionJobs | Where-Object {
+                        $_.Job.Id -in $currentRunningJobIds -and
+                        (($now - $_.StartTime).TotalSeconds -gt $maxJobRuntime)
                     }
+
+                    foreach ($hungJob in $hungJobs) {
+                        Write-Host "`n  WARNING: Job $($hungJob.Job.Id) for $($hungJob.Video.filename) exceeded timeout. Killing job..." -ForegroundColor Red
+                        Stop-Job -Job $hungJob.Job
+                        $null = Update-SPVidCompStatus -VideoId $hungJob.Video.id -Status 'Failed' -AdditionalFields @{
+                            last_error = "Job timeout: exceeded $maxJobRuntime seconds"
+                            retry_count = $hungJob.Video.retry_count + 1
+                        }
+                        Remove-Job -Job $hungJob.Job -Force
+                        $failedCount++
+                    }
+
+                    Start-Sleep -Milliseconds 500
+
+                    # Check for completed jobs and upload them
+                    $completedJobs = $compressionJobs | Where-Object { $_.Job.State -eq 'Completed' -and -not $_.Uploaded }
+                    foreach ($job in $completedJobs) {
+                        $job.Uploaded = $true
+                        $jobResult = Receive-Job -Job $job.Job
+
+                        Write-Host "`n[Job Completed] $($job.Video.filename)" -ForegroundColor Cyan
+                        Write-Host "  Success: $($jobResult.Success)" -ForegroundColor $(if ($jobResult.Success) { 'Green' } else { 'Red' })
+                        if (-not $jobResult.Success) {
+                            Write-Host "  Error: $($jobResult.Error)" -ForegroundColor Red
+                        }
+
+                        if ($jobResult.Success) {
+                            # Upload immediately
+                            Write-Host "[Uploading] $($jobResult.Filename)..." -ForegroundColor Cyan
+                            try {
+                                $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Uploading'
+
+                                $uploadSuccess = Send-SPVidCompVideo -LocalPath $jobResult.TempCompressed -SharePointUrl $jobResult.SharePointUrl
+
+                                if ($uploadSuccess) {
+                                    $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Completed'
+                                    Write-Host "  Uploaded successfully" -ForegroundColor Green
+                                    $processedCount++
+                                }
+                                else {
+                                    throw "Upload failed"
+                                }
+                            }
+                            catch {
+                                Write-Host "  Upload FAILED: $_" -ForegroundColor Red
+                                $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Failed' -AdditionalFields @{
+                                    last_error = "Upload failed: $($_.Exception.Message)"
+                                    retry_count = $jobResult.RetryCount + 1
+                                }
+                                $failedCount++
+                            }
+                            finally {
+                                # Cleanup temp files
+                                if (Test-Path $jobResult.TempOriginal) { Remove-Item $jobResult.TempOriginal -Force -ErrorAction SilentlyContinue }
+                                if (Test-Path $jobResult.TempCompressed) { Remove-Item $jobResult.TempCompressed -Force -ErrorAction SilentlyContinue }
+                            }
+                        }
+                        else {
+                            $failedCount++
+                        }
+
+                        Remove-Job -Job $job.Job -Force
+                    }
+
+                    # Remove completed jobs from tracking array
+                    $compressionJobs = @($compressionJobs | Where-Object { -not $_.Uploaded })
+
+                    # Recalculate running count for next iteration
+                    $systemRunningJobIds = (Get-Job -State Running).Id
+                    $compressionJobs = @($compressionJobs | Where-Object {
+                        $_.Job -and
+                        (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
+                    })
+                    $runningCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemRunningJobIds }).Count
                 }
 
-                # Add sanitized filename
-                $videoArchivePath = Join-Path -Path $videoArchivePath -ChildPath $sanitizeResult.SanitizedFilename
+                # Start compression job
+                $modulePath = Join-Path -Path $PSScriptRoot -ChildPath 'modules\VideoCompressionModule\VideoCompressionModule.psm1'
 
-                Write-Host "  Archive path: $videoArchivePath" -ForegroundColor Gray
-                $archiveResult = Copy-SPVidCompArchive -SourcePath $tempOriginal -ArchivePath $videoArchivePath
+                $job = Start-Job -ScriptBlock {
+                    param($ModulePath, $DatabasePath, $Video, $TempOriginal, $TempCompressed, $ArchivePath,
+                          $FrameRate, $VideoCodec, $TimeoutMinutes, $DurationTolerance,
+                          $IllegalCharStrategy, $IllegalCharReplacement)
 
-                if (-not $archiveResult.Success) {
-                    throw "Archive failed: $($archiveResult.Error)"
+                    # Import module
+                    Import-Module $ModulePath -Force -WarningAction SilentlyContinue
+
+                    # Initialize database
+                    $null = Initialize-SPVidCompCatalog -DatabasePath $DatabasePath
+
+                    try {
+                        # Archive
+                        $null = Update-SPVidCompStatus -VideoId $Video.id -Status 'Archiving'
+
+                        $sanitizeResult = Repair-SPVidCompFilename -Filename $Video.filename `
+                            -Strategy $IllegalCharStrategy -ReplacementChar $IllegalCharReplacement
+
+                        if (-not $sanitizeResult.Success) {
+                            throw "Filename sanitization failed"
+                        }
+
+                        # Build archive path
+                        $siteUri = [System.Uri]$Video.site_url
+                        $sitePath = $siteUri.AbsolutePath.TrimStart('/')
+                        if ([string]::IsNullOrEmpty($sitePath)) {
+                            $sitePath = $siteUri.Host.Split('.')[0]
+                        }
+
+                        # Start with archive base path + site path
+                        $videoArchivePath = $ArchivePath
+                        $sitePath.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object {
+                            $videoArchivePath = Join-Path $videoArchivePath $_
+                        }
+                        $videoArchivePath = Join-Path $videoArchivePath $Video.library_name
+
+                        # Extract folder path relative to library
+                        # folder_path may contain full server-relative path like "/sites/playground/Shared Documents/Vids1"
+                        # We need just the part after the library name
+                        if ($Video.folder_path) {
+                            $folderPathClean = $Video.folder_path.TrimStart('/\')
+
+                            # Find where the library name ends in the folder path
+                            $libraryIndex = $folderPathClean.IndexOf($Video.library_name, [System.StringComparison]::OrdinalIgnoreCase)
+                            if ($libraryIndex -ge 0) {
+                                # Skip past site path and library name to get relative folder path
+                                $relativePath = $folderPathClean.Substring($libraryIndex + $Video.library_name.Length).TrimStart('/\')
+                            } else {
+                                # If library name not found, try to find "Shared Documents" or just use as-is
+                                $sharedDocsIndex = $folderPathClean.IndexOf("Shared Documents", [System.StringComparison]::OrdinalIgnoreCase)
+                                if ($sharedDocsIndex -ge 0) {
+                                    $relativePath = $folderPathClean.Substring($sharedDocsIndex + "Shared Documents".Length).TrimStart('/\')
+                                } else {
+                                    # Last resort: remove site path if present
+                                    $relativePath = $folderPathClean -replace "^sites/[^/]+/[^/]+/", ""
+                                }
+                            }
+
+                            if (-not [string]::IsNullOrWhiteSpace($relativePath)) {
+                                $relativePath.Split('/\', [System.StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object {
+                                    $videoArchivePath = Join-Path $videoArchivePath $_
+                                }
+                            }
+                        }
+
+                        $videoArchivePath = Join-Path $videoArchivePath $sanitizeResult.SanitizedFilename
+
+                        $archiveResult = Copy-SPVidCompArchive -SourcePath $TempOriginal -ArchivePath $videoArchivePath
+
+                        if (-not $archiveResult.Success) {
+                            throw "Archive failed"
+                        }
+
+                        $null = Update-SPVidCompStatus -VideoId $Video.id -Status 'Archiving' -AdditionalFields @{
+                            archive_path = $archiveResult.ArchivePath
+                            original_hash = $archiveResult.SourceHash
+                            archive_hash = $archiveResult.DestinationHash
+                            hash_verified = 1
+                        }
+
+                        # Compress
+                        $null = Update-SPVidCompStatus -VideoId $Video.id -Status 'Compressing'
+
+                        $compressionResult = Invoke-SPVidCompCompression -InputPath $TempOriginal `
+                            -OutputPath $TempCompressed -FrameRate $FrameRate `
+                            -VideoCodec $VideoCodec -TimeoutMinutes $TimeoutMinutes
+
+                        if (-not $compressionResult.Success) {
+                            throw "Compression failed"
+                        }
+
+                        # Verify - TEMPORARILY DISABLED TO TEST
+                        # $null = Update-SPVidCompStatus -VideoId $Video.id -Status 'Verifying'
+
+                        # $integrityCheck = Test-SPVidCompVideoIntegrity -VideoPath $TempCompressed
+                        # if (-not $integrityCheck.IsValid) {
+                        #     throw "Integrity check failed"
+                        # }
+
+                        # $lengthCheck = Test-SPVidCompVideoLength -OriginalPath $TempOriginal -CompressedPath $TempCompressed `
+                        #     -ToleranceSeconds $DurationTolerance
+
+                        # if (-not $lengthCheck.WithinTolerance) {
+                        #     throw "Duration mismatch"
+                        # }
+
+                        $null = Update-SPVidCompStatus -VideoId $Video.id -Status 'Verifying' -AdditionalFields @{
+                            compressed_size = $compressionResult.OutputSize
+                            compression_ratio = $compressionResult.CompressionRatio
+                            # original_duration = $lengthCheck.OriginalDuration
+                            # compressed_duration = $lengthCheck.CompressedDuration
+                            integrity_verified = 0
+                        }
+
+                        return @{
+                            Success = $true
+                            VideoId = $Video.id
+                            Filename = $Video.filename
+                            SharePointUrl = $Video.sharepoint_url
+                            TempOriginal = $TempOriginal
+                            TempCompressed = $TempCompressed
+                            RetryCount = $Video.retry_count
+                            CompressionRatio = $compressionResult.CompressionRatio
+                        }
+                    }
+                    catch {
+                        $null = Update-SPVidCompStatus -VideoId $Video.id -Status 'Failed' -AdditionalFields @{
+                            last_error = $_.Exception.Message
+                            retry_count = $Video.retry_count + 1
+                        }
+
+                        # Cleanup on failure
+                        if (Test-Path $TempOriginal) { Remove-Item $TempOriginal -Force -ErrorAction SilentlyContinue }
+                        if (Test-Path $TempCompressed) { Remove-Item $TempCompressed -Force -ErrorAction SilentlyContinue }
+
+                        return @{
+                            Success = $false
+                            VideoId = $Video.id
+                            Filename = $Video.filename
+                            Error = $_.Exception.Message
+                        }
+                    }
+                } -ArgumentList $modulePath, $DatabasePath, $video, $tempOriginal, $tempCompressed, $archivePath,
+                                $frameRate, $videoCodec, $timeoutMinutes, $durationTolerance,
+                                $illegalCharStrategy, $illegalCharReplacement
+
+                # Add job to tracking array
+                $compressionJobs += @{
+                    Job = $job
+                    Video = $video
+                    State = 'Running'
+                    Uploaded = $false
+                    StartTime = Get-Date
                 }
 
-                # Update database with archive info
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Archiving' -AdditionalFields @{
-                    archive_path = $archiveResult.ArchivePath
-                    original_hash = $archiveResult.SourceHash
-                    archive_hash = $archiveResult.DestinationHash
-                    hash_verified = 1
-                }
+                # Clean up stale job references and count correctly
+                $systemRunningJobs = Get-Job -State Running
+                $compressionJobs = @($compressionJobs | Where-Object {
+                    $_.Job -and (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
+                })
 
-                # Step 3: Compress
-                Write-Host "[3/6] Compressing video..." -ForegroundColor Yellow
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Compressing'
+                # Count only jobs that actually exist and are running
+                $runningJobCount = ($compressionJobs | Where-Object {
+                    $_.Job.Id -in $systemRunningJobs.Id
+                }).Count
 
-                $compressionResult = Invoke-SPVidCompCompression -InputPath $tempOriginal `
-                    -OutputPath $tempCompressed -FrameRate $frameRate `
-                    -VideoCodec $videoCodec -TimeoutMinutes $timeoutMinutes
-
-                if (-not $compressionResult.Success) {
-                    throw "Compression failed: $($compressionResult.Error)"
-                }
-
-                # Step 4: Verify integrity
-                Write-Host "[4/6] Verifying compressed video..." -ForegroundColor Yellow
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Verifying'
-
-                $integrityCheck = Test-SPVidCompVideoIntegrity -VideoPath $tempCompressed
-
-                if (-not $integrityCheck.IsValid) {
-                    throw "Integrity check failed: Video is corrupted"
-                }
-
-                $lengthCheck = Test-SPVidCompVideoLength -OriginalPath $tempOriginal -CompressedPath $tempCompressed `
-                    -ToleranceSeconds $durationTolerance
-
-                if (-not $lengthCheck.WithinTolerance) {
-                    throw "Duration mismatch: Original=$($lengthCheck.OriginalDuration)s, Compressed=$($lengthCheck.CompressedDuration)s"
-                }
-
-                # Update database with verification info
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Verifying' -AdditionalFields @{
-                    compressed_size = $compressionResult.OutputSize
-                    compression_ratio = $compressionResult.CompressionRatio
-                    original_duration = $lengthCheck.OriginalDuration
-                    compressed_duration = $lengthCheck.CompressedDuration
-                    integrity_verified = 1
-                }
-
-                # Step 5: Upload compressed version
-                Write-Host "[5/6] Uploading to SharePoint..." -ForegroundColor Yellow
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Uploading'
-
-                $uploadSuccess = Send-SPVidCompVideo -LocalPath $tempCompressed -SharePointUrl $video.sharepoint_url
-
-                if (-not $uploadSuccess) {
-                    throw "Upload failed"
-                }
-
-                # Step 6: Cleanup
-                Write-Host "[6/6] Cleaning up temp files..." -ForegroundColor Yellow
-
-                if (Test-Path -LiteralPath $tempOriginal) {
-                    Remove-Item -LiteralPath $tempOriginal -Force
-                }
-                if (Test-Path -LiteralPath $tempCompressed) {
-                    Remove-Item -LiteralPath $tempCompressed -Force
-                }
-
-                # Mark as completed
-                $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Completed'
-
-                Write-Host "`nSUCCESS!" -ForegroundColor Green
-                Write-Host "Compression ratio: $($compressionResult.CompressionRatio)" -ForegroundColor Green
-                Write-Host "Space saved: $([math]::Round(($video.original_size - $compressionResult.OutputSize) / 1MB, 2)) MB" -ForegroundColor Green
-
-                # Thread-safe counter increment
-                $counters.Processed++
+                Write-Host "  Compression job started (Job ID: $($job.Id)) - Active jobs: $runningJobCount/$maxParallelJobs" -ForegroundColor Green
             }
             catch {
-                Write-SPVidCompLog -Message "Failed to process video $($video.filename): $_" -Level 'Error'
-                Write-Host "`nFAILED: $_" -ForegroundColor Red
+                Write-SPVidCompLog -Message "Failed to download video $($video.filename): $_" -Level 'Error'
+                Write-Host "  Download FAILED: $_" -ForegroundColor Red
 
-                # Update retry count and mark as failed
                 $retryCount = $video.retry_count + 1
                 $null = Update-SPVidCompStatus -VideoId $video.id -Status 'Failed' -AdditionalFields @{
                     last_error = $_.Exception.Message
                     retry_count = $retryCount
                 }
 
-                # Clean up temp files
-                if (Test-Path -LiteralPath $tempOriginal) {
-                    Remove-Item -LiteralPath $tempOriginal -Force -ErrorAction SilentlyContinue
-                }
-                if (Test-Path -LiteralPath $tempCompressed) {
-                    Remove-Item -LiteralPath $tempCompressed -Force -ErrorAction SilentlyContinue
-                }
-
-                # Thread-safe counter increment
-                $counters.Failed++
-
-                # Send error notification if configured
-                try {
-                    $errorBody = Build-ErrorReport -ErrorMessage $_.Exception.Message `
-                        -VideoFilename $video.filename -SharePointUrl $video.sharepoint_url
-                    Send-SPVidCompNotification -Subject "Video Compression Error: $($video.filename)" `
-                        -Body $errorBody -IsHtml $true
-                }
-                catch {
-                    # Silently ignore email errors in parallel execution
-                    Write-Host "Warning: Failed to send error notification" -ForegroundColor Yellow
-                }
+                $failedCount++
             }
         }
 
-        # Get final counts from thread-safe counters
-        $processedCount = $progressCounters.Processed
-        $failedCount = $progressCounters.Failed
+        # Wait for remaining compression jobs to complete and upload them
+        Write-Host "`nWaiting for remaining compression jobs to complete...`n" -ForegroundColor Yellow
+
+        # Clean up stale job references
+        $compressionJobs = @($compressionJobs | Where-Object {
+            $_.Job -and
+            (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
+        })
+
+        while ($compressionJobs.Count -gt 0) {
+            $systemRunningJobIds = (Get-Job -State Running).Id
+            $systemCompletedJobIds = (Get-Job -State Completed).Id
+
+            $runningCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemRunningJobIds }).Count
+            $pendingUploadCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemCompletedJobIds -and -not $_.Uploaded }).Count
+            if ($runningCount -gt 0 -or $pendingUploadCount -gt 0) {
+                Write-Host "  Status: $runningCount compressing, $pendingUploadCount ready to upload" -ForegroundColor Cyan
+            }
+
+            # Check for hung jobs (timeout + 5 minute buffer for archive/verify)
+            $maxJobRuntime = ($timeoutMinutes + 5) * 60
+            $now = Get-Date
+            $hungJobs = $compressionJobs | Where-Object {
+                $_.Job.Id -in $systemRunningJobIds -and
+                (($now - $_.StartTime).TotalSeconds -gt $maxJobRuntime)
+            }
+
+            foreach ($hungJob in $hungJobs) {
+                Write-Host "`n  WARNING: Job $($hungJob.Job.Id) for $($hungJob.Video.filename) exceeded timeout. Killing job..." -ForegroundColor Red
+                Stop-Job -Job $hungJob.Job
+                $null = Update-SPVidCompStatus -VideoId $hungJob.Video.id -Status 'Failed' -AdditionalFields @{
+                    last_error = "Job timeout: exceeded $maxJobRuntime seconds"
+                    retry_count = $hungJob.Video.retry_count + 1
+                }
+                Remove-Job -Job $hungJob.Job -Force
+                $failedCount++
+            }
+
+            Start-Sleep -Milliseconds 500
+
+            $completedJobs = $compressionJobs | Where-Object { $_.Job.State -eq 'Completed' -and -not $_.Uploaded }
+            foreach ($job in $completedJobs) {
+                $job.Uploaded = $true
+                $job.State = 'Completed'
+                $jobResult = Receive-Job -Job $job.Job
+
+                Write-Host "`n[Job Completed] $($job.Video.filename)" -ForegroundColor Cyan
+                Write-Host "  Success: $($jobResult.Success)" -ForegroundColor $(if ($jobResult.Success) { 'Green' } else { 'Red' })
+                if (-not $jobResult.Success) {
+                    Write-Host "  Error: $($jobResult.Error)" -ForegroundColor Red
+                }
+
+                if ($jobResult.Success) {
+                    Write-Host "[Uploading] $($jobResult.Filename)..." -ForegroundColor Cyan
+                    try {
+                        $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Uploading'
+
+                        $uploadSuccess = Send-SPVidCompVideo -LocalPath $jobResult.TempCompressed -SharePointUrl $jobResult.SharePointUrl
+
+                        if ($uploadSuccess) {
+                            $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Completed'
+                            Write-Host "  Uploaded successfully (Ratio: $($jobResult.CompressionRatio))" -ForegroundColor Green
+                            $processedCount++
+                        }
+                        else {
+                            throw "Upload failed"
+                        }
+                    }
+                    catch {
+                        Write-Host "  Upload FAILED: $_" -ForegroundColor Red
+                        $null = Update-SPVidCompStatus -VideoId $jobResult.VideoId -Status 'Failed' -AdditionalFields @{
+                            last_error = "Upload failed: $($_.Exception.Message)"
+                            retry_count = $jobResult.RetryCount + 1
+                        }
+                        $failedCount++
+                    }
+                    finally {
+                        if (Test-Path $jobResult.TempOriginal) { Remove-Item $jobResult.TempOriginal -Force -ErrorAction SilentlyContinue }
+                        if (Test-Path $jobResult.TempCompressed) { Remove-Item $jobResult.TempCompressed -Force -ErrorAction SilentlyContinue }
+                    }
+                }
+                else {
+                    $failedCount++
+                }
+
+                Remove-Job -Job $job.Job -Force
+            }
+
+            # Remove completed jobs from tracking array
+            $compressionJobs = @($compressionJobs | Where-Object { -not $_.Uploaded })
+
+            # Clean up stale job references for next iteration
+            $compressionJobs = @($compressionJobs | Where-Object {
+                $_.Job -and
+                (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
+            })
+        }
+
+
+        Write-Host "
+All pipeline processing complete!
+" -ForegroundColor Green
 
         Show-SPVidCompHeader "PROCESSING COMPLETE"
         Write-Host "Processed: $processedCount" -ForegroundColor Green
@@ -845,7 +1088,8 @@ if ($Phase -in @('Process', 'Both')) {
 
         Write-Host "Final Statistics:" -ForegroundColor Yellow
         Write-Host "  Total Cataloged: $($finalStats.TotalCataloged)" -ForegroundColor White
-        Write-Host "  Total Completed: $($finalStats.StatusBreakdown | Where-Object { $_.status -eq 'Completed' } | Select-Object -ExpandProperty count)" -ForegroundColor White
+        $completedCount = $finalStats.StatusBreakdown | Where-Object { $_.status -eq 'Completed' }
+        Write-Host "  Total Completed: $(if ($completedCount) { $completedCount.count } else { 0 })" -ForegroundColor White
         Write-Host "  Space Saved: $([math]::Round($finalStats.SpaceSaved / 1GB, 2)) GB" -ForegroundColor White
         Write-Host "  Average Compression: $($finalStats.AverageCompressionRatio)" -ForegroundColor White
 

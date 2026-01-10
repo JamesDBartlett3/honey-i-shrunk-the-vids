@@ -270,6 +270,7 @@ Describe 'Config and Metadata Functions' {
 
         $retrieved = Get-SPVidCompConfig
         $retrieved | Should -Not -BeNullOrEmpty
-        $retrieved['sharepoint_site_url'] | Should -Be $config['sharepoint_site_url']
+        $retrieved['scope_mode'] | Should -Be $config['scope_mode']
+        $retrieved['admin_site_url'] | Should -Be $config['admin_site_url']
     }
 }

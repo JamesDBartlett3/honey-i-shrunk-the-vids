@@ -31,7 +31,7 @@ function Get-SPVidCompDiscoverTenantSites {
         Write-Host ""
 
         # Use PnP Management Shell app (requires admin consent in tenant)
-        Connect-PnPOnline -Url $AdminSiteUrl -Interactive -ClientId "31359c7f-bd7e-475c-86db-fdb8c937548e" -ErrorAction Stop
+        Connect-PnPOnline -Url $AdminSiteUrl -Interactive -ClientId "d0e63221-5ead-43d0-8f3f-ad7c7b30f518" -ErrorAction Stop
 
         Write-Host "Discovering sites in tenant..." -ForegroundColor Yellow
         $sites = Get-PnPTenantSite -Detailed -ErrorAction Stop
@@ -96,7 +96,7 @@ function Get-SPVidCompDiscoverSiteLibraries {
         Write-Host ""
 
         # Use PnP Management Shell app (requires admin consent in tenant)
-        Connect-PnPOnline -Url $SiteUrl -Interactive -ClientId "31359c7f-bd7e-475c-86db-fdb8c937548e" -ErrorAction Stop
+        Connect-PnPOnline -Url $SiteUrl -Interactive -ClientId "d0e63221-5ead-43d0-8f3f-ad7c7b30f518" -ErrorAction Stop
 
         Write-Host "Discovering libraries..." -ForegroundColor Yellow
         $lists = Get-PnPList -ErrorAction Stop
