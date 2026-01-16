@@ -657,31 +657,7 @@ if ($Phase -in @('Process', 'Both')) {
         $processedCount = 0
         $failedCount = 0
 
-        # Clean up any leftover jobs from previous runs
-        $existingJobs = Get-Job
-        if ($existingJobs) {
-            Write-Host "Cleaning up $($existingJobs.Count) leftover job(s) from previous runs..." -ForegroundColor Yellow
-            foreach ($job in $existingJobs) {
-                Write-Host "  Removing job $($job.Id) (State: $($job.State))" -ForegroundColor Gray
-                try {
-                    Stop-Job -Job $job -ErrorAction SilentlyContinue
-                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-                } catch {
-                    Write-Host "    Warning: Could not remove job $($job.Id)" -ForegroundColor Yellow
-                }
-            }
-
-            # Verify cleanup
-            $remainingJobs = Get-Job
-            if ($remainingJobs) {
-                Write-Host "  WARNING: $($remainingJobs.Count) job(s) could not be removed!" -ForegroundColor Red
-                Write-Host "  Run 'Get-Job | Remove-Job -Force' in another window and restart." -ForegroundColor Yellow
-                exit 1
-            }
-            Write-Host "Cleanup complete.`n" -ForegroundColor Green
-        }
-
-        # Job tracking
+        # Job tracking - only track jobs WE create
         $compressionJobs = @()
         $completedVideos = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
 
@@ -722,13 +698,8 @@ if ($Phase -in @('Process', 'Both')) {
                 Write-Host "[2/3] Starting compression job..." -ForegroundColor Yellow
 
                 # Wait if we're at max parallel jobs
-                # Calculate running count - will be recalculated in loop
-                $systemRunningJobIds = (Get-Job -State Running).Id
-                $compressionJobs = @($compressionJobs | Where-Object {
-                    $_.Job -and
-                    (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
-                })
-                $runningCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemRunningJobIds }).Count
+                # Simply count jobs in our tracking array that haven't been uploaded yet
+                $runningCount = ($compressionJobs | Where-Object { -not $_.Uploaded }).Count
 
                 while ($runningCount -ge $maxParallelJobs) {
                     Write-Host "  Waiting for compression slots ($runningCount/$maxParallelJobs active)..." -ForegroundColor Yellow
@@ -736,9 +707,9 @@ if ($Phase -in @('Process', 'Both')) {
                     # Check for hung jobs (timeout + 5 minute buffer for archive/verify)
                     $maxJobRuntime = ($timeoutMinutes + 5) * 60
                     $now = Get-Date
-                    $currentRunningJobIds = (Get-Job -State Running).Id
                     $hungJobs = $compressionJobs | Where-Object {
-                        $_.Job.Id -in $currentRunningJobIds -and
+                        -not $_.Uploaded -and
+                        $_.Job.State -eq 'Running' -and
                         (($now - $_.StartTime).TotalSeconds -gt $maxJobRuntime)
                     }
 
@@ -755,8 +726,11 @@ if ($Phase -in @('Process', 'Both')) {
 
                     Start-Sleep -Milliseconds 500
 
-                    # Check for completed jobs and upload them
-                    $completedJobs = $compressionJobs | Where-Object { $_.Job.State -eq 'Completed' -and -not $_.Uploaded }
+                    # Check for completed jobs in our tracking array
+                    $completedJobs = $compressionJobs | Where-Object {
+                        -not $_.Uploaded -and
+                        $_.Job.State -eq 'Completed'
+                    }
                     foreach ($job in $completedJobs) {
                         $job.Uploaded = $true
                         $jobResult = Receive-Job -Job $job.Job
@@ -809,12 +783,7 @@ if ($Phase -in @('Process', 'Both')) {
                     $compressionJobs = @($compressionJobs | Where-Object { -not $_.Uploaded })
 
                     # Recalculate running count for next iteration
-                    $systemRunningJobIds = (Get-Job -State Running).Id
-                    $compressionJobs = @($compressionJobs | Where-Object {
-                        $_.Job -and
-                        (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
-                    })
-                    $runningCount = ($compressionJobs | Where-Object { $_.Job.Id -in $systemRunningJobIds }).Count
+                    $runningCount = $compressionJobs.Count
                 }
 
                 # Start compression job
@@ -974,16 +943,8 @@ if ($Phase -in @('Process', 'Both')) {
                     StartTime = Get-Date
                 }
 
-                # Clean up stale job references and count correctly
-                $systemRunningJobs = Get-Job -State Running
-                $compressionJobs = @($compressionJobs | Where-Object {
-                    $_.Job -and (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue) -ne $null
-                })
-
-                # Count only jobs that actually exist and are running
-                $runningJobCount = ($compressionJobs | Where-Object {
-                    $_.Job.Id -in $systemRunningJobs.Id
-                }).Count
+                # Count active jobs (jobs not yet uploaded)
+                $runningJobCount = ($compressionJobs | Where-Object { -not $_.Uploaded }).Count
 
                 Write-Host "  Compression job started (Job ID: $($job.Id)) - Active jobs: $runningJobCount/$maxParallelJobs" -ForegroundColor Green
             }
@@ -1012,8 +973,7 @@ if ($Phase -in @('Process', 'Both')) {
 
         $ellipsisCounter = 0
         while ($compressionJobs.Count -gt 0) {
-            $systemRunningJobIds = (Get-Job -State Running).Id
-            $systemCompletedJobIds = (Get-Job -State Completed).Id
+            # Only work with jobs we're tracking - don't query all system jobs
 
             # Check all compressed files and categorize them
             $compressedFiles = Get-ChildItem -Path $tempPath -Filter "*_compressed.mp4" -ErrorAction SilentlyContinue
@@ -1043,7 +1003,8 @@ if ($Phase -in @('Process', 'Both')) {
             $maxJobRuntime = ($timeoutMinutes + 5) * 60
             $now = Get-Date
             $hungJobs = $compressionJobs | Where-Object {
-                $_.Job.Id -in $systemRunningJobIds -and
+                $_.Job -and
+                (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue).State -eq 'Running' -and
                 (($now - $_.StartTime).TotalSeconds -gt $maxJobRuntime)
             }
 
@@ -1062,7 +1023,12 @@ if ($Phase -in @('Process', 'Both')) {
 
             Start-Sleep -Milliseconds 500
 
-            $completedJobs = $compressionJobs | Where-Object { $_.Job.State -eq 'Completed' -and -not $_.Uploaded }
+            # Check for completed jobs in our tracking array
+            $completedJobs = $compressionJobs | Where-Object {
+                $_.Job -and
+                (Get-Job -Id $_.Job.Id -ErrorAction SilentlyContinue).State -eq 'Completed' -and
+                -not $_.Uploaded
+            }
             foreach ($job in $completedJobs) {
                 $job.Uploaded = $true
                 $job.State = 'Completed'
